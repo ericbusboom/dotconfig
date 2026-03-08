@@ -3,6 +3,9 @@ CLI entry point for dotconfig.
 
 Commands
 --------
+dotconfig init
+    Create the config/ directory structure and set up age encryption keys.
+
 dotconfig load <common_name> [local_name]
     Assemble config/ source files into a single .env file.
 
@@ -13,6 +16,7 @@ dotconfig save
 import click
 from pathlib import Path
 
+from .init import init_config
 from .load import load_config
 from .save import save_config
 
@@ -26,6 +30,37 @@ def cli() -> None:
     files (common config, SOPS-encrypted secrets, and developer-local
     overrides) stored under a config/ directory.
     """
+
+
+@cli.command()
+@click.option(
+    "--config-dir",
+    default="config",
+    show_default=True,
+    help="Root config directory to create.",
+)
+def init(config_dir: str) -> None:
+    """Initialise the config directory structure and set up age encryption.
+
+    Creates the following directories (skips any that already exist):
+
+    \b
+        config/
+        config/secrets/
+        config/local/
+        config/secrets/local/
+
+    Then discovers an existing age private key (checking SOPS_AGE_KEY,
+    SOPS_AGE_KEY_FILE, and ~/.config/sops/age/keys.txt in that order),
+    derives the public key, and ensures it is listed in .sops.yaml.
+
+    Example:
+
+    \b
+        dotconfig init
+        dotconfig init --config-dir myconfig
+    """
+    init_config(config_dir=Path(config_dir))
 
 
 @cli.command()
