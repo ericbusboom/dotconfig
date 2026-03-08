@@ -104,6 +104,8 @@ def load(
 
 
 @cli.command()
+@click.argument("common_name", required=False, default=None)
+@click.argument("local_name", required=False, default=None)
 @click.option(
     "--env-file",
     default=".env",
@@ -116,20 +118,29 @@ def load(
     show_default=True,
     help="Root config directory.",
 )
-def save(env_file: str, config_dir: str) -> None:
+def save(common_name: str, local_name: str, env_file: str, config_dir: str) -> None:
     """Save .env sections back to config/ source files.
 
     Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata, then
     writes each section back to its corresponding source file, re-encrypting
     secrets with SOPS.
 
+    Optionally provide COMMON_NAME and LOCAL_NAME to save to a different
+    environment or user than what was originally loaded.  For example,
+    after loading ``prod eric`` you can run ``dotconfig save dev stan`` to
+    write the same content to the dev/stan config files instead.
+
     Example:
 
     \b
         dotconfig save
+        dotconfig save dev stan
+        dotconfig save prod
         dotconfig save --env-file .env.staging --config-dir config
     """
     save_config(
         env_file=Path(env_file),
         config_dir=Path(config_dir),
+        override_common=common_name,
+        override_local=local_name,
     )

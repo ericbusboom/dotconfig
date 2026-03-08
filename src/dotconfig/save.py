@@ -104,16 +104,27 @@ def parse_env_file(
     return common_name, local_name, sections
 
 
-def save_config(env_file: Path, config_dir: Path) -> None:
+def save_config(
+    env_file: Path,
+    config_dir: Path,
+    override_common: Optional[str] = None,
+    override_local: Optional[str] = None,
+) -> None:
     """Save .env sections back to the config/ source files.
 
     Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata comments,
     then writes each section to its corresponding file:
 
-      - public ({common_name})         -> config/{common_name}.env
-      - secrets ({common_name})        -> config/secrets/{common_name}.env  (SOPS-encrypted)
-      - public-local ({local_name})    -> config/local/{local_name}.env
-      - secrets-local ({local_name})   -> config/secrets/local/{local_name}.env (SOPS-encrypted)
+      - public ({common_name})         -> config/{save_common}.env
+      - secrets ({common_name})        -> config/secrets/{save_common}.env  (SOPS-encrypted)
+      - public-local ({local_name})    -> config/local/{save_local}.env
+      - secrets-local ({local_name})   -> config/secrets/local/{save_local}.env (SOPS-encrypted)
+
+    If *override_common* is given it is used as the destination common name
+    (i.e. the files that are written to) instead of CONFIG_COMMON.  Likewise
+    *override_local* overrides CONFIG_LOCAL for the destination local name.
+    This allows saving a loaded .env to a *different* environment or user,
+    e.g. loading ``prod eric`` and saving as ``dev stan``.
 
     If SOPS_AGE_KEY_FILE is found inside the .env, it is added to the
     current process environment before invoking sops.
@@ -141,12 +152,16 @@ def save_config(env_file: Path, config_dir: Path) -> None:
         )
         sys.exit(1)
 
+    # Determine destination names: overrides take precedence over metadata.
+    save_common = override_common if override_common is not None else common_name
+    save_local = override_local if override_local is not None else local_name
+
     saved = []
 
     # --- Public (common) ---
     public_key = f"public ({common_name})"
     if public_key in sections:
-        public_file = config_dir / f"{common_name}.env"
+        public_file = config_dir / f"{save_common}.env"
         public_file.parent.mkdir(parents=True, exist_ok=True)
         body = sections[public_key]
         public_file.write_text(body + "\n" if body else "")
@@ -157,13 +172,13 @@ def save_config(env_file: Path, config_dir: Path) -> None:
     if secrets_key in sections:
         secrets_body = sections[secrets_key]
         if secrets_body:
-            secrets_file = config_dir / "secrets" / f"{common_name}.env"
+            secrets_file = config_dir / "secrets" / f"{save_common}.env"
             secrets_file.parent.mkdir(parents=True, exist_ok=True)
             if _encrypt_sops(secrets_body + "\n", secrets_file):
                 saved.append(f"  secrets (encrypted) -> {secrets_file}")
             else:
                 print(
-                    f"Warning: could not encrypt secrets for {common_name}",
+                    f"Warning: could not encrypt secrets for {save_common}",
                     file=sys.stderr,
                 )
 
@@ -172,7 +187,7 @@ def save_config(env_file: Path, config_dir: Path) -> None:
         local_key = f"public-local ({local_name})"
         if local_key in sections:
             local_body = sections[local_key]
-            local_file = config_dir / "local" / f"{local_name}.env"
+            local_file = config_dir / "local" / f"{save_local}.env"
             local_file.parent.mkdir(parents=True, exist_ok=True)
             local_file.write_text(local_body + "\n" if local_body else "")
             saved.append(f"  public-local config -> {local_file}")
@@ -183,7 +198,7 @@ def save_config(env_file: Path, config_dir: Path) -> None:
             secrets_local_body = sections[secrets_local_key]
             if secrets_local_body:
                 secrets_local_file = (
-                    config_dir / "secrets" / "local" / f"{local_name}.env"
+                    config_dir / "secrets" / "local" / f"{save_local}.env"
                 )
                 secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
                 if _encrypt_sops(secrets_local_body + "\n", secrets_local_file):
@@ -192,7 +207,7 @@ def save_config(env_file: Path, config_dir: Path) -> None:
                     )
                 else:
                     print(
-                        f"Warning: could not encrypt local secrets for {local_name}",
+                        f"Warning: could not encrypt local secrets for {save_local}",
                         file=sys.stderr,
                     )
 
