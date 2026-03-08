@@ -4,8 +4,16 @@ Init command: create the config directory structure and set up age keys.
 Creates the standard dotconfig directory layout under config/ and
 optionally configures SOPS age encryption by discovering an existing
 age private key and updating .sops.yaml.
+
+Also creates template files (``config/public.env`` and
+``config/secrets/secret.env``) and generates default env files for the
+``dev`` and ``prod`` deployments and for the current OS user.  Running
+``init`` more than once is safe: it harmonises any new variables added to
+a template into all files derived from that template (appending them with
+an empty value), leaving existing values intact.
 """
 
+import getpass
 import os
 import re
 import subprocess
@@ -20,6 +28,30 @@ _SOPS_PATH_REGEX = r"config/secrets/.+\.(?:env|json|yaml|yml|txt|conf)$"
 
 # Matches a valid age secret key line.
 _AGE_SECRET_KEY_RE = re.compile(r"^AGE-SECRET-KEY-[A-Za-z0-9]+$")
+
+# Template file names (relative to config_dir and config_dir/secrets).
+_PUBLIC_TEMPLATE = "public.env"
+_SECRET_TEMPLATE = "secret.env"
+
+# Default deployment environments created from templates on first init.
+_DEFAULT_ENVS = ["dev", "prod"]
+
+# Header comment written into newly created template files.
+_PUBLIC_TEMPLATE_HEADER = (
+    "# Public configuration template\n"
+    "# Add non-sensitive environment variables here.\n"
+    "# Running 'dotconfig init' again will propagate new variables to all\n"
+    "# environment-specific public files (dev.env, prod.env, local/<user>.env).\n"
+)
+
+_SECRET_TEMPLATE_HEADER = (
+    "# Secret configuration template\n"
+    "# Add sensitive environment variable *names* here (leave values empty).\n"
+    "# Running 'dotconfig init' again will propagate new variables to all\n"
+    "# environment-specific secret files (secrets/dev.env, secrets/prod.env,\n"
+    "# secrets/local/<user>.env).\n"
+    "# Fill in actual secret values in the generated files, then encrypt with SOPS.\n"
+)
 
 
 def _extract_secret_key(text: str) -> Optional[str]:
@@ -213,6 +245,135 @@ def _update_sops_yaml(project_dir: Path, public_key: str) -> None:
     print(f"           added public key {public_key}")
 
 
+def _get_current_user() -> str:
+    """Return the current OS username."""
+    return getpass.getuser()
+
+
+def _parse_env_keys(content: str) -> list[str]:
+    """Return the list of variable *names* found in .env *content*.
+
+    Comments (lines starting with ``#``) and blank lines are ignored.
+    Only lines of the form ``KEY=…`` are considered.
+    """
+    keys = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key = line.split("=", 1)[0].strip()
+            if key:
+                keys.append(key)
+    return keys
+
+
+def _create_template_if_missing(path: Path, header: str) -> None:
+    """Create a template .env file at *path* if it does not already exist.
+
+    Prints a ``created`` message on creation or ``ok`` if the file is
+    already present.
+    """
+    if not path.exists():
+        path.write_text(header)
+        print(f"  created: {path}")
+    else:
+        print(f"  ok:      {path}")
+
+
+def _create_file_from_template(template_path: Path, target_path: Path) -> None:
+    """Create *target_path* as a copy of *template_path* if it does not exist.
+
+    Prints a ``created`` message on creation or ``ok`` if the file is
+    already present.  After creation (or on a subsequent run where the file
+    already exists) the file is harmonised with the template so that any
+    variables added to the template since the file was last created are
+    appended with empty values.
+    """
+    if not target_path.exists():
+        target_path.write_text(template_path.read_text())
+        print(f"  created: {target_path}")
+    else:
+        print(f"  ok:      {target_path}")
+
+    _harmonize_env_file(template_path, target_path)
+
+
+def _harmonize_env_file(template_path: Path, target_path: Path) -> None:
+    """Append variables from *template_path* that are absent in *target_path*.
+
+    Existing variable values in *target_path* are never modified.  Only
+    variables that appear in the template but are completely absent from the
+    target are added, with an empty value (``KEY=``).
+    """
+    template_keys = _parse_env_keys(template_path.read_text())
+    if not template_keys:
+        return
+
+    target_content = target_path.read_text()
+    target_keys = set(_parse_env_keys(target_content))
+
+    missing = [k for k in template_keys if k not in target_keys]
+    if not missing:
+        return
+
+    additions = "\n".join(f"{k}=" for k in missing)
+    separator = "" if target_content.endswith("\n") else "\n"
+    target_path.write_text(target_content + separator + additions + "\n")
+    print(
+        f"  harmonized: {target_path} "
+        f"(added {len(missing)} variable(s): {', '.join(missing)})"
+    )
+
+
+def _init_templates(config_dir: Path, current_user: str) -> None:
+    """Create template files and default env files; harmonise on subsequent runs.
+
+    Templates (source of truth for variable schemas):
+      - ``config/public.env``          — public variables template
+      - ``config/secrets/secret.env``  — secret variables template
+
+    Generated public files (derived from the public template):
+      - ``config/dev.env``
+      - ``config/prod.env``
+      - ``config/local/<current_user>.env``
+
+    Generated secret files (derived from the secret template):
+      - ``config/secrets/dev.env``
+      - ``config/secrets/prod.env``
+      - ``config/secrets/local/<current_user>.env``
+
+    On every run, each generated file is harmonised against its template so
+    that new variables added to a template are propagated (with empty values)
+    to all derived files.
+    """
+    public_template = config_dir / _PUBLIC_TEMPLATE
+    secret_template = config_dir / "secrets" / _SECRET_TEMPLATE
+
+    print("\nInitialising configuration templates:")
+    _create_template_if_missing(public_template, _PUBLIC_TEMPLATE_HEADER)
+    _create_template_if_missing(secret_template, _SECRET_TEMPLATE_HEADER)
+
+    print("\nCreating environment files:")
+
+    # Public files derived from the public template
+    for env_name in _DEFAULT_ENVS:
+        _create_file_from_template(public_template, config_dir / f"{env_name}.env")
+    _create_file_from_template(
+        public_template, config_dir / "local" / f"{current_user}.env"
+    )
+
+    # Secret files derived from the secret template
+    for env_name in _DEFAULT_ENVS:
+        _create_file_from_template(
+            secret_template, config_dir / "secrets" / f"{env_name}.env"
+        )
+    _create_file_from_template(
+        secret_template,
+        config_dir / "secrets" / "local" / f"{current_user}.env",
+    )
+
+
 def init_config(config_dir: Path) -> None:
     """Initialise the dotconfig directory structure.
 
@@ -226,7 +387,23 @@ def init_config(config_dir: Path) -> None:
     If a directory already exists it is reported as **ok** and left
     untouched.
 
-    After creating the directories the command attempts to discover an
+    Then creates (or verifies) two template files:
+
+    * ``config/public.env``         — public variables template
+    * ``config/secrets/secret.env`` — secret variables template
+
+    And generates default env files for the ``dev`` and ``prod`` deployments
+    and for the current OS user:
+
+    * ``config/dev.env``, ``config/prod.env``, ``config/local/<user>.env``
+    * ``config/secrets/dev.env``, ``config/secrets/prod.env``,
+      ``config/secrets/local/<user>.env``
+
+    Running ``init`` more than once is safe and recommended: any new
+    variables added to a template are harmonised (appended with an empty
+    value) into all files derived from that template on subsequent runs.
+
+    After directory and template setup, the command attempts to discover an
     existing age private key (following SOPS key-discovery priority order),
     derives the corresponding public key, and ensures that key is listed in
     ``.sops.yaml`` at the project root.  If no key is found, guidance is
@@ -253,6 +430,10 @@ def init_config(config_dir: Path) -> None:
         else:
             d.mkdir(parents=True, exist_ok=True)
             print(f"  created: {d}/")
+
+    # ---- Template and env-file setup ----------------------------------------
+    current_user = _get_current_user()
+    _init_templates(config_dir, current_user)
 
     # ---- Key setup --------------------------------------------------------
     print("\nSetting up age encryption key:")
