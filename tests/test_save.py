@@ -244,3 +244,77 @@ class TestSaveConfigErrors:
         with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
             save_config(env_file, config_dir)
         assert os.environ.get("SOPS_AGE_KEY_FILE") == "/home/alice/.config/sops/keys.txt"
+
+
+# ---------------------------------------------------------------------------
+# save_config — override common/local (save to different location)
+# ---------------------------------------------------------------------------
+
+class TestSaveConfigOverride:
+    def test_override_common_writes_to_different_env(self, env_file, config_dir):
+        """Saving with override_common='prod' writes to prod.env, not dev.env."""
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)  # CONFIG_COMMON=dev
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="prod")
+        assert (config_dir / "prod.env").exists()
+        assert not (config_dir / "dev.env").exists()
+
+    def test_override_common_writes_correct_content(self, env_file, config_dir):
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="staging")
+        staging = config_dir / "staging.env"
+        assert staging.exists()
+        assert "APP_DOMAIN=example.com" in staging.read_text()
+
+    def test_override_common_writes_secrets_to_new_env(self, env_file, config_dir):
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="staging")
+        secrets = config_dir / "secrets" / "staging.env"
+        assert secrets.exists()
+        assert "SESSION_SECRET=abc123" in secrets.read_text()
+
+    def test_override_local_writes_to_different_user(self, env_file, config_dir):
+        """Saving with override_local='bob' writes to bob.env, not alice.env."""
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL)  # CONFIG_LOCAL=alice
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_local="bob")
+        assert (config_dir / "local" / "bob.env").exists()
+        assert not (config_dir / "local" / "alice.env").exists()
+
+    def test_override_local_writes_correct_content(self, env_file, config_dir):
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_local="bob")
+        bob_file = config_dir / "local" / "bob.env"
+        assert "DEV_DOCKER_CONTEXT=orbstack" in bob_file.read_text()
+
+    def test_override_both_common_and_local(self, env_file, config_dir):
+        """Can override both common and local simultaneously."""
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL_SECRETS)  # dev + alice
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="prod", override_local="stan")
+        assert (config_dir / "prod.env").exists()
+        assert (config_dir / "local" / "stan.env").exists()
+        assert (config_dir / "secrets" / "prod.env").exists()
+        assert (config_dir / "secrets" / "local" / "stan.env").exists()
+
+    def test_no_override_uses_metadata_names(self, env_file, config_dir):
+        """Without overrides, existing behaviour is unchanged."""
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        assert (config_dir / "dev.env").exists()
+        assert (config_dir / "local" / "alice.env").exists()
+
+    def test_override_common_no_local_in_env(self, env_file, config_dir):
+        """override_local is ignored when .env has no local sections."""
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)  # no local
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="prod", override_local="stan")
+        # Common files should be created with the override name
+        assert (config_dir / "prod.env").exists()
+        assert "APP_DOMAIN=example.com" in (config_dir / "prod.env").read_text()
+        # Local files should NOT be created since there are no local sections
+        assert not (config_dir / "local").exists()
