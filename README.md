@@ -1,2 +1,369 @@
 # dotconfig
-Program for managing .env files in development. 
+
+**Environment configuration cascade manager for `.env` files.**
+
+`dotconfig` assembles a single `.env` file from multiple layered source
+files — public config, SOPS-encrypted secrets, and per-developer local
+overrides — and can round-trip it back.  It is designed for teams where:
+
+- Different developers have different local settings (Docker context, domain
+  names, key paths).
+- Secrets live in SOPS-encrypted files alongside public config.
+- Multiple named environments (dev, prod, test, staging, CI, …) share the
+  same layout.
+- Every tool (Docker, dotenv, IDEs) still reads a single `.env` file.
+
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Directory structure](#directory-structure)
+- [Generated `.env` format](#generated-env-format)
+- [Commands](#commands)
+  - [`dotconfig load`](#dotconfig-load)
+  - [`dotconfig save`](#dotconfig-save)
+- [SOPS integration](#sops-integration)
+- [Workflow](#workflow)
+- [Adding a new environment](#adding-a-new-environment)
+- [Adding a new developer](#adding-a-new-developer)
+- [Design decisions](#design-decisions)
+
+---
+
+## Installation
+
+Install with [pipx](https://pipx.pypa.io) so the tool is globally available
+without polluting any project's virtual environment:
+
+```bash
+pipx install dotconfig
+```
+
+Or into a project's own virtual environment:
+
+```bash
+pip install dotconfig
+```
+
+Verify the install:
+
+```bash
+dotconfig --version
+```
+
+---
+
+## Quick start
+
+```
+your-project/
+  config/
+    dev.env          ← create this (public dev vars)
+    prod.env         ← create this (public prod vars)
+    local/
+      yourname.env   ← create this (your personal overrides)
+    secrets/
+      dev.env        ← SOPS-encrypted dev secrets
+      prod.env       ← SOPS-encrypted prod secrets
+      local/         ← optional personal encrypted secrets
+  .env               ← generated; do not edit directly (add to .gitignore)
+```
+
+**Load** config into `.env`:
+
+```bash
+dotconfig load dev yourname     # dev environment + your local overrides
+dotconfig load prod             # prod environment, no local overrides
+```
+
+**Edit** `.env` directly if you need to tweak a value, then **save** it
+back to the source files:
+
+```bash
+dotconfig save
+```
+
+---
+
+## Directory structure
+
+```
+config/
+  dev.env                       # Public common config for "dev"
+  prod.env                      # Public common config for "prod"
+  test.env                      # Public common config for "test" (etc.)
+  local/
+    alice.env                    # Public local overrides for Alice
+    bob.env                      # Another developer's overrides
+  secrets/
+    dev.env                      # SOPS-encrypted secrets for "dev"
+    prod.env                     # SOPS-encrypted secrets for "prod"
+    dev.env.example              # Plaintext template showing required secret keys
+    prod.env.example             # Plaintext template for prod secrets
+    local/
+      alice.env                  # SOPS-encrypted local secrets (optional, rare)
+```
+
+Environment names are open-ended — use any string that works as a filename
+(`dev`, `prod`, `test`, `staging`, `ci`, …).
+
+---
+
+## Generated `.env` format
+
+`dotconfig load` produces a `.env` file with **marked sections** that map
+back to the source files:
+
+```bash
+# CONFIG_COMMON=dev
+# CONFIG_LOCAL=ericbusboom
+
+# --- public (dev) ---
+APP_DOMAIN=inventory.example.com
+NODE_ENV=development
+PORT=3000
+DEPLOYMENT=dev
+DATABASE_URL=postgresql://app:devpassword@localhost:5433/app
+DO_SPACES_ENDPOINT=https://sfo3.digitaloceanspaces.com
+DO_SPACES_BUCKET=my-bucket
+DO_SPACES_REGION=sfo3
+
+# --- secrets (dev) ---
+SESSION_SECRET=abc123...
+GITHUB_CLIENT_ID=...
+GOOGLE_CLIENT_ID=...
+
+# --- public-local (ericbusboom) ---
+DEV_DOCKER_CONTEXT=orbstack
+PROD_DOCKER_CONTEXT=swarm1
+QR_DOMAIN=http://192.168.1.40:5173/
+SOPS_AGE_KEY_FILE=/Users/ericbusboom/.config/sops/age/keys.txt
+
+# --- secrets-local (ericbusboom) ---
+```
+
+**Last-write-wins**: when the file is shell-sourced (`set -a; . .env; set +a`),
+later sections override earlier ones.  Local overrides common; secrets
+override public.
+
+The two metadata comments (`CONFIG_COMMON`, `CONFIG_LOCAL`) tell `dotconfig
+save` where to write each section back.
+
+---
+
+## Commands
+
+### `dotconfig load`
+
+```
+Usage: dotconfig load [OPTIONS] COMMON_NAME [LOCAL_NAME]
+
+  Assemble config files into .env.
+
+  COMMON_NAME selects the environment (e.g. dev, prod, test).
+  LOCAL_NAME optionally adds a developer-specific override layer.
+
+Options:
+  --config-dir TEXT  Root config directory.  [default: config]
+  --output TEXT      Destination .env file.  [default: .env]
+  --help             Show this message and exit.
+```
+
+**Examples:**
+
+```bash
+# Load dev environment with Eric's local overrides
+dotconfig load dev ericbusboom
+
+# Load prod environment, no local overrides
+dotconfig load prod
+
+# Load a custom environment name pointing to a non-default config directory
+dotconfig load staging --config-dir /path/to/config
+
+# Write to a file other than .env
+dotconfig load dev --output .env.dev
+```
+
+**What it reads:**
+
+| Source file | Section in `.env` |
+|---|---|
+| `config/{common}.env` | `# --- public ({common}) ---` |
+| `config/secrets/{common}.env` (SOPS-encrypted) | `# --- secrets ({common}) ---` |
+| `config/local/{local}.env` | `# --- public-local ({local}) ---` |
+| `config/secrets/local/{local}.env` (SOPS-encrypted) | `# --- secrets-local ({local}) ---` |
+
+If a secrets file is absent or SOPS is unavailable, the section is written
+as empty with a warning — the command does not abort.
+
+If a local file is absent, a warning is printed and the section is written
+as empty — useful when a new developer clones the repo before creating their
+own local overrides.
+
+---
+
+### `dotconfig save`
+
+```
+Usage: dotconfig save [OPTIONS]
+
+  Save .env sections back to config/ source files.
+
+  Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata, then writes
+  each section back to its corresponding source file, re-encrypting secrets
+  with SOPS.
+
+Options:
+  --env-file TEXT    .env file to read and save.  [default: .env]
+  --config-dir TEXT  Root config directory.  [default: config]
+  --help             Show this message and exit.
+```
+
+**Examples:**
+
+```bash
+# Save all sections from .env back to config/
+dotconfig save
+
+# Save from a non-default file
+dotconfig save --env-file .env.staging
+```
+
+**What it writes:**
+
+| Section in `.env` | Destination file |
+|---|---|
+| `# --- public ({common}) ---` | `config/{common}.env` (plaintext) |
+| `# --- secrets ({common}) ---` | `config/secrets/{common}.env` (SOPS-encrypted) |
+| `# --- public-local ({local}) ---` | `config/local/{local}.env` (plaintext) |
+| `# --- secrets-local ({local}) ---` | `config/secrets/local/{local}.env` (SOPS-encrypted, only if non-empty) |
+
+`dotconfig save` requires a dotconfig-managed `.env` (one that was produced
+by `dotconfig load`) because it relies on the `CONFIG_COMMON` metadata
+comment to know where to write the files back.
+
+---
+
+## SOPS integration
+
+`dotconfig` delegates all encryption and decryption to
+[sops](https://github.com/getsops/sops).  You must install sops separately.
+
+**SOPS is optional for loading public config.**  If sops is not installed,
+or a secrets file is missing, the secrets section is left empty and a warning
+is printed.
+
+**Key discovery** follows the standard sops precedence:
+
+1. `SOPS_AGE_KEY_FILE` environment variable (path to an age private key file)
+2. `SOPS_AGE_KEY` environment variable (inline age private key)
+3. `.sops.yaml` in the project root
+
+If `SOPS_AGE_KEY_FILE` is defined inside `.env` itself (e.g. in the
+public-local section), `dotconfig save` reads it from the file before
+invoking sops, so you do not need to export it manually.
+
+**Recommended `.sops.yaml`:**
+
+```yaml
+creation_rules:
+  - path_regex: config/secrets/[^/]+\.(?:env|json|yaml|yml|txt|conf)$
+    age: >-
+      age1v3f2rn...,age1h02a69...
+```
+
+---
+
+## Workflow
+
+### First-time setup (new developer)
+
+```bash
+git clone <repo>
+# Create your personal local overrides
+cp config/local/ericbusboom.env config/local/yourname.env
+# Edit it with your values
+$EDITOR config/local/yourname.env
+# Load dev config
+dotconfig load dev yourname
+```
+
+### Daily development
+
+```bash
+# Reload if someone changed config files
+dotconfig load dev yourname
+
+# Make an ad-hoc change in .env directly, then save it back
+$EDITOR .env
+dotconfig save
+```
+
+### Keeping `.env` out of version control
+
+Add `.env` to `.gitignore` — it is a generated file:
+
+```gitignore
+# Generated by dotconfig load — do not commit
+.env
+```
+
+The source files in `config/` are committed.  Encrypted secrets files
+(`config/secrets/`) are safe to commit because they are SOPS-encrypted.
+
+---
+
+## Adding a new environment
+
+1. Create `config/{name}.env` with the public variables for that environment.
+2. Create `config/secrets/{name}.env.example` listing the required secret keys
+   (no values).
+3. Encrypt a copy of the example with real values:
+   ```bash
+   cp config/secrets/{name}.env.example config/secrets/{name}.env
+   $EDITOR config/secrets/{name}.env     # fill in real values
+   sops --encrypt --in-place config/secrets/{name}.env
+   ```
+4. Load and verify:
+   ```bash
+   dotconfig load {name}
+   ```
+
+---
+
+## Adding a new developer
+
+1. Ask the developer to generate an age key pair:
+   ```bash
+   age-keygen -o ~/.config/sops/age/keys.txt
+   # Share the PUBLIC key (age1...) with the team
+   ```
+2. Add their public key to `.sops.yaml` and re-encrypt secrets:
+   ```bash
+   sops updatekeys config/secrets/dev.env
+   sops updatekeys config/secrets/prod.env
+   ```
+3. The developer creates their local overrides:
+   ```bash
+   cp config/local/ericbusboom.env config/local/theirname.env
+   $EDITOR config/local/theirname.env
+   dotconfig load dev theirname
+   ```
+
+---
+
+## Design decisions
+
+| Decision | Rationale |
+|---|---|
+| **Single `.env` file** | Tools (dotenv, Docker, IDEs) read one file — no cascade-compatibility issues. |
+| **Marked sections** | Enable round-tripping between `.env` and `config/` source files without extra metadata files. |
+| **Open environment names** | Not limited to `dev`/`prod`; supports `test`, `ci`, `staging`, or any custom name. |
+| **Last-write-wins ordering** | Later sections override earlier when shell-sourced; local overrides common. |
+| **SOPS optional at load time** | Developers without SOPS access can still load public config; secrets are skipped with a warning. |
+| **No shell variable expansion** | Values are literal strings — no `$VAR` interpolation. Use a local override to change a value for a specific machine. |
+| **Local secrets are optional** | `config/secrets/local/` exists but most developers won't need it. |
+
