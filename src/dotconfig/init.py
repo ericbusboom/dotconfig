@@ -49,6 +49,45 @@ def _read_key_from_file(path: Path) -> Optional[str]:
         return None
 
 
+def _is_age_installed() -> bool:
+    """Return True if the ``age`` toolchain (age-keygen) is on PATH."""
+    try:
+        subprocess.run(
+            ["age-keygen", "--version"],
+            capture_output=True,
+            check=True,
+        )
+        return True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return False
+
+
+def _generate_age_key() -> Optional[str]:
+    """Generate a new age keypair and save it to the standard location.
+
+    Creates ``~/.config/sops/age/keys.txt`` with a freshly generated
+    keypair.  Returns the secret key string, or ``None`` on failure.
+    """
+    key_file = Path.home() / ".config" / "sops" / "age" / "keys.txt"
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            ["age-keygen", "-o", str(key_file)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(
+                f"  Warning: age-keygen failed: {result.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return None
+        # age-keygen prints the public key to stderr; read the secret from file
+        return _read_key_from_file(key_file)
+    except FileNotFoundError:
+        return None
+
+
 def _discover_age_key() -> Optional[str]:
     """Discover the age secret key following SOPS priority order.
 
@@ -175,6 +214,15 @@ def _add_key_to_sops_yaml(content: str, public_key: str) -> str:
             if not stripped.endswith(","):
                 stripped += ","
             result.append(stripped + public_key)
+            inserted = True
+            i += 1
+            continue
+
+        # ---- "age:" with empty/missing value --------------------------------
+        if re.match(r"^\s+age:\s*$", line):
+            indent = len(line) - len(line.lstrip())
+            result.append(" " * indent + "age: >-")
+            result.append(" " * (indent + 2) + public_key)
             inserted = True
             i += 1
             continue

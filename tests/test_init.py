@@ -187,6 +187,26 @@ class TestAddKeyToSopsYaml:
         idx_new = result.index(FAKE_PUBLIC_KEY)
         assert idx_existing < idx_new
 
+    def test_key_inserted_when_age_field_empty(self):
+        content = (
+            "creation_rules:\n"
+            "  - path_regex: .+/secrets\\.env$\n"
+            "    age:\n"
+        )
+        result = _add_key_to_sops_yaml(content, FAKE_PUBLIC_KEY)
+        assert FAKE_PUBLIC_KEY in result
+        assert "age: >-" in result
+
+    def test_key_inserted_when_age_field_empty_with_trailing_space(self):
+        content = (
+            "creation_rules:\n"
+            "  - path_regex: .+/secrets\\.env$\n"
+            "    age: \n"
+        )
+        result = _add_key_to_sops_yaml(content, FAKE_PUBLIC_KEY)
+        assert FAKE_PUBLIC_KEY in result
+        assert "age: >-" in result
+
 
 # ---------------------------------------------------------------------------
 # _update_sops_yaml
