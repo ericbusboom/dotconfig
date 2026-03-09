@@ -13,11 +13,17 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 
-def _encrypt_sops(content: str, filepath: Path) -> bool:
+def _encrypt_sops(
+    content: str, filepath: Path, sops_config: Optional[Path] = None
+) -> bool:
     """Encrypt content with SOPS and save to filepath.
 
     Writes content to a temporary file, encrypts it in-place with sops,
     then moves it to the target path.  Returns True on success.
+
+    If *sops_config* is provided and exists, it is passed to sops via
+    ``--config`` so that a non-dotfile ``sops.yaml`` inside the config
+    directory is found even when it would not be auto-discovered.
     """
     try:
         # Write plaintext to a temp file in the same directory so sops
@@ -29,8 +35,13 @@ def _encrypt_sops(content: str, filepath: Path) -> bool:
             with os.fdopen(tmp_fd, "w") as f:
                 f.write(content)
 
+            cmd = ["sops"]
+            if sops_config is not None and sops_config.exists():
+                cmd += ["--config", str(sops_config)]
+            cmd += ["--encrypt", "--in-place", tmp_path]
+
             result = subprocess.run(
-                ["sops", "--encrypt", "--in-place", tmp_path],
+                cmd,
                 capture_output=True,
                 text=True,
             )
@@ -158,6 +169,11 @@ def save_config(
 
     saved = []
 
+    # Locate the sops config file so it can be passed explicitly to sops.
+    # sops.yaml is a non-dotfile and is not auto-discovered by sops, so we
+    # must pass --config when invoking sops.
+    sops_config = config_dir / "sops.yaml"
+
     # --- Public (common) ---
     public_key = f"public ({common_name})"
     if public_key in sections:
@@ -174,7 +190,7 @@ def save_config(
         if secrets_body:
             secrets_file = config_dir / save_common / "secrets.env"
             secrets_file.parent.mkdir(parents=True, exist_ok=True)
-            if _encrypt_sops(secrets_body + "\n", secrets_file):
+            if _encrypt_sops(secrets_body + "\n", secrets_file, sops_config):
                 saved.append(f"  secrets (encrypted) -> {secrets_file}")
             else:
                 print(
@@ -201,7 +217,7 @@ def save_config(
                     config_dir / "local" / save_local / "secrets.env"
                 )
                 secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
-                if _encrypt_sops(secrets_local_body + "\n", secrets_local_file):
+                if _encrypt_sops(secrets_local_body + "\n", secrets_local_file, sops_config):
                     saved.append(
                         f"  secrets-local (encrypted) -> {secrets_local_file}"
                     )

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dotconfig.load import load_config
+from dotconfig.load import _decrypt_sops, load_config
 
 
 @pytest.fixture()
@@ -40,7 +40,7 @@ def config_dir(tmp_path: Path) -> Path:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _fake_decrypt(filepath: Path):
+def _fake_decrypt(filepath: Path, sops_config=None):
     """Return file contents as-is (simulates successful sops decrypt)."""
     return filepath.read_text()
 
@@ -187,3 +187,80 @@ class TestLoadConfigErrors:
         # Section marker still present; variables not included
         assert "# --- secrets (dev) ---" in text
         assert "SESSION_SECRET" not in text
+
+
+# ---------------------------------------------------------------------------
+# load_config — sops.yaml --config flag
+# ---------------------------------------------------------------------------
+
+class TestLoadConfigSopsConfig:
+    def test_sops_config_passed_when_sops_yaml_exists(self, config_dir, tmp_path):
+        """When config/sops.yaml exists, _decrypt_sops is called with its path."""
+        sops_yaml = config_dir / "sops.yaml"
+        sops_yaml.write_text("creation_rules: []\n")
+        out = tmp_path / ".env"
+
+        calls = []
+
+        def capture_decrypt(filepath, sops_config=None):
+            calls.append(sops_config)
+            return filepath.read_text()
+
+        with patch("dotconfig.load._decrypt_sops", side_effect=capture_decrypt):
+            load_config("dev", None, config_dir, out)
+
+        assert calls, "expected _decrypt_sops to be called"
+        assert all(sc == sops_yaml for sc in calls)
+
+    def test_sops_config_path_passed_when_sops_yaml_missing(self, config_dir, tmp_path):
+        """When config/sops.yaml does not exist, sops_config path is still passed; --config is NOT used."""
+        out = tmp_path / ".env"
+
+        calls = []
+
+        def capture_decrypt(filepath, sops_config=None):
+            calls.append(sops_config)
+            return filepath.read_text()
+
+        with patch("dotconfig.load._decrypt_sops", side_effect=capture_decrypt):
+            load_config("dev", None, config_dir, out)
+
+        assert calls, "expected _decrypt_sops to be called"
+        expected = config_dir / "sops.yaml"
+        assert not expected.exists(), "sops.yaml should be absent for this test"
+        assert all(sc == expected for sc in calls)
+
+    def test_decrypt_sops_includes_config_flag_in_cmd(self, tmp_path):
+        """_decrypt_sops passes --config to subprocess when sops_config exists."""
+        sops_yaml = tmp_path / "sops.yaml"
+        sops_yaml.write_text("creation_rules: []\n")
+        secrets_file = tmp_path / "secrets.env"
+        secrets_file.write_text("SECRET=value\n")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "SECRET=value\n"
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _decrypt_sops(secrets_file, sops_config=sops_yaml)
+
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert "--config" in cmd
+        assert str(sops_yaml) in cmd
+
+    def test_decrypt_sops_no_config_flag_when_sops_yaml_missing(self, tmp_path):
+        """_decrypt_sops omits --config when sops_config file does not exist."""
+        sops_yaml = tmp_path / "sops.yaml"  # does not exist
+        assert not sops_yaml.exists()
+        secrets_file = tmp_path / "secrets.env"
+        secrets_file.write_text("SECRET=value\n")
+
+        mock_result = MagicMock()
+        mock_result.stdout = "SECRET=value\n"
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _decrypt_sops(secrets_file, sops_config=sops_yaml)
+
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert "--config" not in cmd
