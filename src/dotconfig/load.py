@@ -11,15 +11,24 @@ from pathlib import Path
 from typing import Optional
 
 
-def _decrypt_sops(filepath: Path) -> Optional[str]:
+def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optional[str]:
     """Decrypt a SOPS-encrypted file.
 
     Returns decrypted content as a string, or None if decryption is
     unavailable (sops not installed, key missing, or file unreadable).
+
+    If *sops_config* is provided and exists, it is passed to sops via
+    ``--config`` so that a non-dotfile ``sops.yaml`` inside the config
+    directory is found even when it would not be auto-discovered.
     """
     try:
+        cmd = ["sops"]
+        if sops_config is not None and sops_config.exists():
+            cmd += ["--config", str(sops_config)]
+        cmd += ["--decrypt", str(filepath)]
+
         result = subprocess.run(
-            ["sops", "--decrypt", str(filepath)],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -78,6 +87,11 @@ def load_config(
 
     parts = []
 
+    # Locate the sops config file so it can be passed explicitly to sops.
+    # sops.yaml is a non-dotfile and is not auto-discovered by sops, so we
+    # must pass --config when invoking sops.
+    sops_config = config_dir / "sops.yaml"
+
     # --- Metadata header ---
     parts.append(f"# CONFIG_COMMON={common_name}")
     if local_name:
@@ -95,7 +109,7 @@ def load_config(
     parts.append(f"# --- secrets ({common_name}) ---")
     secrets_env = config_dir / common_name / "secrets.env"
     if secrets_env.exists():
-        decrypted = _decrypt_sops(secrets_env)
+        decrypted = _decrypt_sops(secrets_env, sops_config)
         if decrypted and decrypted.strip():
             parts.append(decrypted.strip())
     else:
@@ -124,7 +138,7 @@ def load_config(
         parts.append(f"# --- secrets-local ({local_name}) ---")
         secrets_local = config_dir / "local" / local_name / "secrets.env"
         if secrets_local.exists():
-            decrypted = _decrypt_sops(secrets_local)
+            decrypted = _decrypt_sops(secrets_local, sops_config)
             if decrypted and decrypted.strip():
                 parts.append(decrypted.strip())
 

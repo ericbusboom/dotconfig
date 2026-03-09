@@ -2,11 +2,11 @@
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
-from dotconfig.save import parse_env_file, save_config
+from dotconfig.save import _encrypt_sops, parse_env_file, save_config
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ class TestParseEnvFile:
 # save_config — happy paths (SOPS mocked out)
 # ---------------------------------------------------------------------------
 
-def _fake_encrypt(content: str, filepath: Path) -> bool:
+def _fake_encrypt(content: str, filepath: Path, sops_config=None) -> bool:
     """Simulates successful sops encrypt by writing plaintext."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
     filepath.write_text(content)
@@ -318,3 +318,91 @@ class TestSaveConfigOverride:
         assert "APP_DOMAIN=example.com" in (config_dir / "prod" / "public.env").read_text()
         # Local files should NOT be created since there are no local sections
         assert not (config_dir / "local").exists()
+
+
+# ---------------------------------------------------------------------------
+# save_config — sops.yaml --config flag
+# ---------------------------------------------------------------------------
+
+class TestSaveConfigSopsConfig:
+    def test_sops_config_passed_when_sops_yaml_exists(self, env_file, config_dir):
+        """When config/sops.yaml exists, _encrypt_sops is called with its path."""
+        sops_yaml = config_dir / "sops.yaml"
+        sops_yaml.write_text("creation_rules: []\n")
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)
+
+        calls = []
+
+        def capture_encrypt(content, filepath, sops_config=None):
+            calls.append(sops_config)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            filepath.write_text(content)
+            return True
+
+        with patch("dotconfig.save._encrypt_sops", side_effect=capture_encrypt):
+            save_config(env_file, config_dir)
+
+        assert calls, "expected _encrypt_sops to be called"
+        assert all(sc == sops_yaml for sc in calls)
+
+    def test_sops_config_path_passed_when_sops_yaml_missing(self, env_file, config_dir):
+        """When config/sops.yaml does not exist, sops_config path is still passed; --config is NOT used."""
+        env_file.write_text(SAMPLE_ENV_COMMON_ONLY)
+
+        calls = []
+
+        def capture_encrypt(content, filepath, sops_config=None):
+            calls.append(sops_config)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            filepath.write_text(content)
+            return True
+
+        with patch("dotconfig.save._encrypt_sops", side_effect=capture_encrypt):
+            save_config(env_file, config_dir)
+
+        assert calls, "expected _encrypt_sops to be called"
+        expected = config_dir / "sops.yaml"
+        assert not expected.exists(), "sops.yaml should be absent for this test"
+        assert all(sc == expected for sc in calls)
+
+    def test_encrypt_sops_includes_config_flag_in_cmd(self, tmp_path):
+        """_encrypt_sops passes --config to subprocess when sops_config exists."""
+        sops_yaml = tmp_path / "sops.yaml"
+        sops_yaml.write_text("creation_rules: []\n")
+        target = tmp_path / "secrets.env"
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        import subprocess
+        from unittest.mock import MagicMock
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            # Create the target dir so mkstemp works
+            _encrypt_sops("SECRET=value\n", target, sops_config=sops_yaml)
+
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert "--config" in cmd
+        assert str(sops_yaml) in cmd
+
+    def test_encrypt_sops_no_config_flag_when_sops_yaml_missing(self, tmp_path):
+        """_encrypt_sops omits --config from subprocess when sops_config absent."""
+        target = tmp_path / "secrets.env"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        sops_yaml = tmp_path / "sops.yaml"  # does not exist
+        assert not sops_yaml.exists()
+
+        import subprocess
+        from unittest.mock import MagicMock
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            _encrypt_sops("SECRET=value\n", target, sops_config=sops_yaml)
+
+        assert mock_run.called
+        cmd = mock_run.call_args[0][0]
+        assert "--config" not in cmd
