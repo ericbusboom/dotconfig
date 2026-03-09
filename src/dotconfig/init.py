@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from .output import created, error, heading, info, ok, updated, warn
+
 # Path regex used in sops.yaml creation_rules.
 # Matches secrets.env (and other extensions) under any subdirectory.
 # Because sops.yaml lives inside config/, sops resolves file paths relative
@@ -256,19 +258,19 @@ def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
             f"      {public_key}\n"
         )
         sops_yaml.write_text(content)
-        print(f"  created: {sops_yaml}")
-        print(f"           added public key {public_key}")
+        created(f"{sops_yaml}")
+        info(f"added public key {public_key}")
         return
 
     existing = sops_yaml.read_text()
     if public_key in existing:
-        print(f"  ok:      {sops_yaml} (key already listed)")
+        ok(f"{sops_yaml} (key already listed)")
         return
 
-    updated = _add_key_to_sops_yaml(existing, public_key)
-    sops_yaml.write_text(updated)
-    print(f"  updated: {sops_yaml}")
-    print(f"           added public key {public_key}")
+    updated_content = _add_key_to_sops_yaml(existing, public_key)
+    sops_yaml.write_text(updated_content)
+    updated(f"{sops_yaml}")
+    info(f"added public key {public_key}")
 
 
 def _get_current_user() -> str:
@@ -284,9 +286,9 @@ def _create_env_if_missing(path: Path) -> None:
     """
     if not path.exists():
         path.write_text("")
-        print(f"  created: {path}")
+        created(str(path))
     else:
-        print(f"  ok:      {path}")
+        ok(str(path))
 
 
 def _init_env_files(config_dir: Path, current_user: str) -> None:
@@ -304,7 +306,7 @@ def _init_env_files(config_dir: Path, current_user: str) -> None:
     Subdirectories are created automatically if they do not already exist.
     On every run, existing files are left completely untouched.
     """
-    print("\nCreating environment files:")
+    heading("📁 Environment files:")
 
     for env_name in _DEFAULT_ENVS:
         env_dir = config_dir / env_name
@@ -342,7 +344,7 @@ def init_config(config_dir: Path) -> None:
     ``sops.yaml`` inside *config_dir*.  If no key is found, guidance is
     printed instead.
     """
-    print("Initialising dotconfig directory structure:")
+    heading("📦 Initialising dotconfig:")
 
     dirs = [
         config_dir,
@@ -352,50 +354,65 @@ def init_config(config_dir: Path) -> None:
     for d in dirs:
         if d.exists():
             if d.is_dir():
-                print(f"  ok:      {d}/")
+                ok(f"{d}/")
             else:
-                print(
-                    f"  warning: {d} exists but is not a directory",
-                    file=sys.stderr,
-                )
+                warn(f"{d} exists but is not a directory")
         else:
             d.mkdir(parents=True, exist_ok=True)
-            print(f"  created: {d}/")
+            created(f"{d}/")
 
     # ---- Env-file setup ----------------------------------------
     current_user = _get_current_user()
     _init_env_files(config_dir, current_user)
 
     # ---- Key setup --------------------------------------------------------
-    print("\nSetting up age encryption key:")
+    heading("🔑 Setting up age encryption key:")
 
     secret_key = _discover_age_key()
-    if secret_key is None:
-        print("  No age key found.")
-        print("  To set up encryption, generate a key and re-run init:")
-        print("    age-keygen -o ~/.config/sops/age/keys.txt")
-        print("    dotconfig init")
-        return
+    default_key_file = Path.home() / ".config" / "sops" / "age" / "keys.txt"
 
-    # Report where the key was found
-    if os.environ.get("SOPS_AGE_KEY", ""):
-        source = "SOPS_AGE_KEY (environment variable)"
-    elif os.environ.get("SOPS_AGE_KEY_FILE", ""):
-        source = f"SOPS_AGE_KEY_FILE ({os.environ['SOPS_AGE_KEY_FILE']})"
+    if secret_key is None:
+        if not _is_age_installed():
+            error("age is not installed.")
+            info("Install it from: https://github.com/FiloSottile/age#installation")
+            info("Then re-run: dotconfig init")
+            return
+
+        # age is installed but no key was found — explain and ask
+        warn("No age key found. Looked in:")
+        info("  1. SOPS_AGE_KEY environment variable")
+        info("  2. SOPS_AGE_KEY_FILE environment variable")
+        info(f"  3. {default_key_file}")
+        print()
+        answer = input(
+            f"  Generate a new key at {default_key_file}? [Y/n] "
+        ).strip().lower()
+        if answer and answer not in ("y", "yes"):
+            info("Skipping key setup. Re-run dotconfig init after configuring your key.")
+            return
+
+        secret_key = _generate_age_key()
+        if secret_key is None:
+            error("Failed to generate age key.")
+            return
+        created(f"key at {default_key_file}")
+        source = str(default_key_file)
     else:
-        source = str(Path.home() / ".config" / "sops" / "age" / "keys.txt")
-    print(f"  Found key in: {source}")
+        # Report where the existing key was found
+        if os.environ.get("SOPS_AGE_KEY", ""):
+            source = "SOPS_AGE_KEY (environment variable)"
+        elif os.environ.get("SOPS_AGE_KEY_FILE", ""):
+            source = f"SOPS_AGE_KEY_FILE ({os.environ['SOPS_AGE_KEY_FILE']})"
+        else:
+            source = str(default_key_file)
+    ok(f"key: {source}")
 
     public_key = _derive_public_key(secret_key)
     if public_key is None:
-        print(
-            "  Warning: could not derive public key — skipping sops.yaml update",
-            file=sys.stderr,
-        )
+        warn("Could not derive public key — skipping sops.yaml update")
         return
 
-    print(f"  Public key:   {public_key}")
+    info(f"public key: {public_key}")
 
-    # sops.yaml lives inside config_dir
-    print("\nUpdating sops.yaml:")
+    heading("📝 Updating sops.yaml:")
     _update_sops_yaml(config_dir, public_key)

@@ -1,3 +1,0 @@
-creation_rules:
-  - path_regex: .+/secrets\.(?:env|json|yaml|yml|txt|conf)$
-    age: 

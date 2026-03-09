@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from .output import error, ok, warn
+
 
 def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optional[str]:
     """Decrypt a SOPS-encrypted file.
@@ -35,16 +37,10 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
         )
         return result.stdout
     except FileNotFoundError:
-        print(
-            f"Warning: sops not found — skipping encrypted file {filepath}",
-            file=sys.stderr,
-        )
+        warn(f"sops not found — skipping encrypted file {filepath}")
         return None
     except subprocess.CalledProcessError as e:
-        print(
-            f"Warning: sops decryption failed for {filepath}: {e.stderr.strip()}",
-            file=sys.stderr,
-        )
+        warn(f"sops decryption failed for {filepath}: {e.stderr.strip()}")
         return None
 
 
@@ -79,10 +75,7 @@ def load_config(
     """
     common_env = config_dir / common_name / "public.env"
     if not common_env.exists():
-        print(
-            f"Error: common config file not found: {common_env}",
-            file=sys.stderr,
-        )
+        error(f"common config file not found: {common_env}")
         sys.exit(1)
 
     parts = []
@@ -113,10 +106,7 @@ def load_config(
         if decrypted and decrypted.strip():
             parts.append(decrypted.strip())
     else:
-        print(
-            f"Info: secrets file not found: {secrets_env} — secrets section will be empty",
-            file=sys.stderr,
-        )
+        warn(f"secrets file not found: {secrets_env} — secrets section will be empty")
 
     if local_name:
         # --- Public-local section ---
@@ -128,10 +118,7 @@ def load_config(
             if local_content:
                 parts.append(local_content)
         else:
-            print(
-                f"Warning: local config file not found: {local_env} — public-local section will be empty",
-                file=sys.stderr,
-            )
+            warn(f"local config file not found: {local_env} — public-local section will be empty")
 
         # --- Secrets-local section ---
         parts.append("")
@@ -144,4 +131,4 @@ def load_config(
 
     # Ensure the file ends with a newline
     output.write_text("\n".join(parts) + "\n")
-    print(f"Written to {output}")
+    ok(f"Written to {output}")

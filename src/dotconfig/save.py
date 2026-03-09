@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from .output import error, heading, ok, warn
+
 
 def _encrypt_sops(
     content: str, filepath: Path, sops_config: Optional[Path] = None
@@ -49,23 +51,17 @@ def _encrypt_sops(
             text=True,
         )
         if result.returncode != 0:
-            print(
-                f"Warning: sops encryption failed for {filepath}: {result.stderr.strip()}",
-                file=sys.stderr,
-            )
+            warn(f"sops encryption failed for {filepath}: {result.stderr.strip()}")
             # Remove the plaintext file on encryption failure
             filepath.unlink(missing_ok=True)
             return False
 
         return True
     except FileNotFoundError:
-        print(
-            f"Warning: sops not found — cannot encrypt {filepath}",
-            file=sys.stderr,
-        )
+        warn(f"sops not found — cannot encrypt {filepath}")
         return False
     except Exception as e:
-        print(f"Warning: error encrypting {filepath}: {e}", file=sys.stderr)
+        warn(f"error encrypting {filepath}: {e}")
         return False
 
 
@@ -137,7 +133,7 @@ def save_config(
     current process environment before invoking sops.
     """
     if not env_file.exists():
-        print(f"Error: {env_file} does not exist", file=sys.stderr)
+        error(f"{env_file} does not exist")
         sys.exit(1)
 
     content = env_file.read_text()
@@ -153,10 +149,7 @@ def save_config(
     common_name, local_name, sections = parse_env_file(content)
 
     if not common_name:
-        print(
-            "Error: CONFIG_COMMON not found in .env — is this a dotconfig-managed file?",
-            file=sys.stderr,
-        )
+        error("CONFIG_COMMON not found in .env — is this a dotconfig-managed file?")
         sys.exit(1)
 
     # Determine destination names: overrides take precedence over metadata.
@@ -177,7 +170,7 @@ def save_config(
         public_file.parent.mkdir(parents=True, exist_ok=True)
         body = sections[public_key]
         public_file.write_text(body + "\n" if body else "")
-        saved.append(f"  public config       -> {public_file}")
+        saved.append(("public config", str(public_file)))
 
     # --- Secrets (common) ---
     secrets_key = f"secrets ({common_name})"
@@ -187,12 +180,9 @@ def save_config(
             secrets_file = config_dir / save_common / "secrets.env"
             secrets_file.parent.mkdir(parents=True, exist_ok=True)
             if _encrypt_sops(secrets_body + "\n", secrets_file, sops_config):
-                saved.append(f"  secrets (encrypted) -> {secrets_file}")
+                saved.append(("secrets 🔒", str(secrets_file)))
             else:
-                print(
-                    f"Warning: could not encrypt secrets for {save_common}",
-                    file=sys.stderr,
-                )
+                warn(f"could not encrypt secrets for {save_common}")
 
     if local_name:
         # --- Public-local ---
@@ -202,7 +192,7 @@ def save_config(
             local_file = config_dir / "local" / save_local / "public.env"
             local_file.parent.mkdir(parents=True, exist_ok=True)
             local_file.write_text(local_body + "\n" if local_body else "")
-            saved.append(f"  public-local config -> {local_file}")
+            saved.append(("public-local config", str(local_file)))
 
         # --- Secrets-local ---
         secrets_local_key = f"secrets-local ({local_name})"
@@ -214,18 +204,13 @@ def save_config(
                 )
                 secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
                 if _encrypt_sops(secrets_local_body + "\n", secrets_local_file, sops_config):
-                    saved.append(
-                        f"  secrets-local (encrypted) -> {secrets_local_file}"
-                    )
+                    saved.append(("secrets-local 🔒", str(secrets_local_file)))
                 else:
-                    print(
-                        f"Warning: could not encrypt local secrets for {save_local}",
-                        file=sys.stderr,
-                    )
+                    warn(f"could not encrypt local secrets for {save_local}")
 
     if saved:
-        print("Saved:")
-        for line in saved:
-            print(line)
+        heading("💾 Saved:")
+        for label, path in saved:
+            ok(f"{label} → {path}")
     else:
-        print("Nothing saved.")
+        warn("Nothing saved.")

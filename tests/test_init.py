@@ -12,8 +12,10 @@ from dotconfig.init import (
     _derive_public_key,
     _discover_age_key,
     _extract_secret_key,
+    _generate_age_key,
     _get_current_user,
     _init_env_files,
+    _is_age_installed,
     _read_key_from_file,
     _update_sops_yaml,
     init_config,
@@ -263,6 +265,7 @@ class TestInitConfigDirectories:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -279,6 +282,7 @@ class TestInitConfigDirectories:
         marker.write_text("do not delete")
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -289,6 +293,7 @@ class TestInitConfigDirectories:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -299,6 +304,7 @@ class TestInitConfigDirectories:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -309,6 +315,7 @@ class TestInitConfigDirectories:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -323,15 +330,88 @@ class TestInitConfigDirectories:
 # ---------------------------------------------------------------------------
 
 class TestInitConfigKeySetup:
-    def test_no_key_found_prints_guidance(self, tmp_path, capsys):
+    def test_no_key_and_age_not_installed_prints_install_url(self, tmp_path, capsys):
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        captured = capsys.readouterr()
+        assert "https://github.com/FiloSottile/age" in captured.out
+        assert "not installed" in captured.err
+
+    def test_no_key_shows_search_locations(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("builtins.input", return_value="n"),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
         out = capsys.readouterr().out
-        assert "age-keygen" in out
+        assert "SOPS_AGE_KEY" in out
+        assert "SOPS_AGE_KEY_FILE" in out
+        assert "keys.txt" in out
+
+    def test_no_key_user_declines_skips_setup(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("builtins.input", return_value="n"),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        sops_yaml = config_dir / "sops.yaml"
+        assert not sops_yaml.exists()
+        out = capsys.readouterr().out
+        assert "Skipping" in out
+
+    def test_no_key_user_accepts_generates_key(self, tmp_path):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("builtins.input", return_value="y"),
+            patch("dotconfig.init._generate_age_key", return_value=FAKE_SECRET_KEY),
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        sops_yaml = config_dir / "sops.yaml"
+        assert sops_yaml.exists()
+        assert FAKE_PUBLIC_KEY in sops_yaml.read_text()
+
+    def test_no_key_user_presses_enter_defaults_yes(self, tmp_path):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("builtins.input", return_value=""),
+            patch("dotconfig.init._generate_age_key", return_value=FAKE_SECRET_KEY),
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        sops_yaml = config_dir / "sops.yaml"
+        assert sops_yaml.exists()
+        assert FAKE_PUBLIC_KEY in sops_yaml.read_text()
+
+    def test_no_key_generate_fails_prints_error(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("builtins.input", return_value="y"),
+            patch("dotconfig.init._generate_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        err = capsys.readouterr().err
+        assert "Failed to generate" in err
 
     def test_key_found_updates_sops_yaml(self, tmp_path):
         config_dir = tmp_path / "config"
@@ -494,6 +574,7 @@ class TestInitConfigEnvFiles:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -508,6 +589,7 @@ class TestInitConfigEnvFiles:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -519,6 +601,7 @@ class TestInitConfigEnvFiles:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -529,6 +612,7 @@ class TestInitConfigEnvFiles:
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
@@ -538,6 +622,7 @@ class TestInitConfigEnvFiles:
 
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)

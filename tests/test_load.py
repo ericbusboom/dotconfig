@@ -176,7 +176,7 @@ class TestLoadConfigErrors:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", "unknown_dev", config_dir, out)
         captured = capsys.readouterr()
-        assert "Warning" in captured.err
+        assert "not found" in captured.err
         assert out.exists()
 
     def test_sops_failure_gracefully_skipped(self, config_dir, tmp_path):

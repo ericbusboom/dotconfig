@@ -232,7 +232,7 @@ class TestSaveConfigErrors:
         with patch("dotconfig.save._encrypt_sops", return_value=False):
             save_config(env_file, config_dir)
         captured = capsys.readouterr()
-        assert "Warning" in captured.err
+        assert "could not encrypt" in captured.err
         # Public file should still be written
         assert (config_dir / "dev" / "public.env").exists()
 
