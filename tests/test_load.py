@@ -14,27 +14,24 @@ def config_dir(tmp_path: Path) -> Path:
     """Return a populated temporary config/ directory."""
     cfg = tmp_path / "config"
 
-    # Common env files
-    (cfg).mkdir()
-    (cfg / "dev.env").write_text(
+    # Dev environment
+    (cfg / "dev").mkdir(parents=True)
+    (cfg / "dev" / "public.env").write_text(
         "APP_DOMAIN=example.com\nNODE_ENV=development\nPORT=3000\n"
     )
-    (cfg / "prod.env").write_text(
+    (cfg / "dev" / "secrets.env").write_text("SESSION_SECRET=abc123\n")
+
+    # Prod environment
+    (cfg / "prod").mkdir(parents=True)
+    (cfg / "prod" / "public.env").write_text(
         "APP_DOMAIN=prod.example.com\nNODE_ENV=production\nPORT=8080\n"
     )
 
-    # Secrets directory (plain text for tests — no real SOPS)
-    (cfg / "secrets").mkdir()
-    (cfg / "secrets" / "dev.env").write_text("SESSION_SECRET=abc123\n")
-
     # Local overrides
-    (cfg / "local").mkdir()
-    (cfg / "local" / "alice.env").write_text(
+    (cfg / "local" / "alice").mkdir(parents=True)
+    (cfg / "local" / "alice" / "public.env").write_text(
         "DEV_DOCKER_CONTEXT=orbstack\nQR_DOMAIN=http://192.168.1.1:5173/\n"
     )
-
-    # Local secrets directory
-    (cfg / "secrets" / "local").mkdir()
 
     return cfg
 
@@ -169,7 +166,7 @@ class TestLoadConfigErrors:
     def test_missing_secrets_file_does_not_crash(self, config_dir, tmp_path, capsys):
         out = tmp_path / ".env"
         # Remove secrets file
-        (config_dir / "secrets" / "dev.env").unlink()
+        (config_dir / "dev" / "secrets.env").unlink()
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
         assert out.exists()

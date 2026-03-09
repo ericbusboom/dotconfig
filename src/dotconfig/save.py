@@ -21,7 +21,7 @@ def _encrypt_sops(content: str, filepath: Path) -> bool:
     """
     try:
         # Write plaintext to a temp file in the same directory so sops
-        # can infer creation rules from .sops.yaml
+        # can infer creation rules from sops.yaml
         tmp_fd, tmp_path = tempfile.mkstemp(
             suffix=".env", dir=filepath.parent if filepath.parent.exists() else None
         )
@@ -115,10 +115,10 @@ def save_config(
     Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata comments,
     then writes each section to its corresponding file:
 
-      - public ({common_name})         -> config/{save_common}.env
-      - secrets ({common_name})        -> config/secrets/{save_common}.env  (SOPS-encrypted)
-      - public-local ({local_name})    -> config/local/{save_local}.env
-      - secrets-local ({local_name})   -> config/secrets/local/{save_local}.env (SOPS-encrypted)
+      - public ({common_name})         -> config/{save_common}/public.env
+      - secrets ({common_name})        -> config/{save_common}/secrets.env  (SOPS-encrypted)
+      - public-local ({local_name})    -> config/local/{save_local}/public.env
+      - secrets-local ({local_name})   -> config/local/{save_local}/secrets.env (SOPS-encrypted)
 
     If *override_common* is given it is used as the destination common name
     (i.e. the files that are written to) instead of CONFIG_COMMON.  Likewise
@@ -161,7 +161,7 @@ def save_config(
     # --- Public (common) ---
     public_key = f"public ({common_name})"
     if public_key in sections:
-        public_file = config_dir / f"{save_common}.env"
+        public_file = config_dir / save_common / "public.env"
         public_file.parent.mkdir(parents=True, exist_ok=True)
         body = sections[public_key]
         public_file.write_text(body + "\n" if body else "")
@@ -172,7 +172,7 @@ def save_config(
     if secrets_key in sections:
         secrets_body = sections[secrets_key]
         if secrets_body:
-            secrets_file = config_dir / "secrets" / f"{save_common}.env"
+            secrets_file = config_dir / save_common / "secrets.env"
             secrets_file.parent.mkdir(parents=True, exist_ok=True)
             if _encrypt_sops(secrets_body + "\n", secrets_file):
                 saved.append(f"  secrets (encrypted) -> {secrets_file}")
@@ -187,7 +187,7 @@ def save_config(
         local_key = f"public-local ({local_name})"
         if local_key in sections:
             local_body = sections[local_key]
-            local_file = config_dir / "local" / f"{save_local}.env"
+            local_file = config_dir / "local" / save_local / "public.env"
             local_file.parent.mkdir(parents=True, exist_ok=True)
             local_file.write_text(local_body + "\n" if local_body else "")
             saved.append(f"  public-local config -> {local_file}")
@@ -198,7 +198,7 @@ def save_config(
             secrets_local_body = sections[secrets_local_key]
             if secrets_local_body:
                 secrets_local_file = (
-                    config_dir / "secrets" / "local" / f"{save_local}.env"
+                    config_dir / "local" / save_local / "secrets.env"
                 )
                 secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
                 if _encrypt_sops(secrets_local_body + "\n", secrets_local_file):

@@ -195,7 +195,7 @@ class TestAddKeyToSopsYaml:
 class TestUpdateSopsYaml:
     def test_creates_sops_yaml_when_missing(self, tmp_path):
         _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
-        sops_yaml = tmp_path / ".sops.yaml"
+        sops_yaml = tmp_path / "sops.yaml"
         assert sops_yaml.exists()
         content = sops_yaml.read_text()
         assert FAKE_PUBLIC_KEY in content
@@ -203,17 +203,17 @@ class TestUpdateSopsYaml:
 
     def test_created_file_contains_path_regex(self, tmp_path):
         _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
-        content = (tmp_path / ".sops.yaml").read_text()
-        assert "config/secrets/" in content
+        content = (tmp_path / "sops.yaml").read_text()
+        assert "config/.+/secrets" in content
 
     def test_does_not_overwrite_when_key_already_listed(self, tmp_path):
         existing = (
             "creation_rules:\n"
-            "  - path_regex: config/secrets/.+\\.env$\n"
+            "  - path_regex: config/.+/secrets\\.env$\n"
             "    age: >-\n"
             f"      {FAKE_PUBLIC_KEY}\n"
         )
-        sops_yaml = tmp_path / ".sops.yaml"
+        sops_yaml = tmp_path / "sops.yaml"
         sops_yaml.write_text(existing)
         original_mtime = sops_yaml.stat().st_mtime_ns
 
@@ -223,13 +223,13 @@ class TestUpdateSopsYaml:
     def test_adds_key_to_existing_file(self, tmp_path):
         existing = (
             "creation_rules:\n"
-            "  - path_regex: config/secrets/.+\\.env$\n"
+            "  - path_regex: config/.+/secrets\\.env$\n"
             "    age: >-\n"
             "      age1otherkey,\n"
         )
-        (tmp_path / ".sops.yaml").write_text(existing)
+        (tmp_path / "sops.yaml").write_text(existing)
         _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
-        content = (tmp_path / ".sops.yaml").read_text()
+        content = (tmp_path / "sops.yaml").read_text()
         assert "age1otherkey" in content
         assert FAKE_PUBLIC_KEY in content
 
@@ -239,42 +239,58 @@ class TestUpdateSopsYaml:
 # ---------------------------------------------------------------------------
 
 class TestInitConfigDirectories:
-    def test_creates_all_four_directories(self, tmp_path):
+    def test_creates_required_directories(self, tmp_path):
         config_dir = tmp_path / "config"
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
         assert (config_dir).is_dir()
-        assert (config_dir / "secrets").is_dir()
         assert (config_dir / "local").is_dir()
-        assert (config_dir / "secrets" / "local").is_dir()
+        assert (config_dir / "dev").is_dir()
+        assert (config_dir / "prod").is_dir()
+        assert (config_dir / "local" / "testuser").is_dir()
 
     def test_existing_directories_not_overwritten(self, tmp_path):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         marker = config_dir / "marker.txt"
         marker.write_text("do not delete")
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
         # marker file should still be present
         assert marker.exists()
 
     def test_all_subdirs_created_idempotently(self, tmp_path):
         config_dir = tmp_path / "config"
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
             # Running a second time should not raise
             init_config(config_dir)
 
     def test_output_reports_created(self, tmp_path, capsys):
         config_dir = tmp_path / "config"
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
         out = capsys.readouterr().out
         assert "created" in out
 
     def test_output_reports_ok_for_existing(self, tmp_path, capsys):
         config_dir = tmp_path / "config"
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
             capsys.readouterr()  # discard first run output
             init_config(config_dir)
@@ -289,7 +305,10 @@ class TestInitConfigDirectories:
 class TestInitConfigKeySetup:
     def test_no_key_found_prints_guidance(self, tmp_path, capsys):
         config_dir = tmp_path / "config"
-        with patch("dotconfig.init._discover_age_key", return_value=None):
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
             init_config(config_dir)
         out = capsys.readouterr().out
         assert "age-keygen" in out
@@ -299,9 +318,10 @@ class TestInitConfigKeySetup:
         with (
             patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
             patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
-        sops_yaml = tmp_path / ".sops.yaml"
+        sops_yaml = config_dir / "sops.yaml"
         assert sops_yaml.exists()
         assert FAKE_PUBLIC_KEY in sops_yaml.read_text()
 
@@ -310,20 +330,22 @@ class TestInitConfigKeySetup:
         with (
             patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
             patch("dotconfig.init._derive_public_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)  # should not raise
         assert (config_dir).is_dir()
 
-    def test_sops_yaml_created_in_project_root(self, tmp_path):
+    def test_sops_yaml_created_in_config_dir(self, tmp_path):
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
             patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
-        # .sops.yaml should be at tmp_path, not inside config/
-        assert (tmp_path / ".sops.yaml").exists()
-        assert not (config_dir / ".sops.yaml").exists()
+        # sops.yaml should be inside config/, not at project root
+        assert (config_dir / "sops.yaml").exists()
+        assert not (tmp_path / "sops.yaml").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -379,10 +401,9 @@ class TestCreateEnvIfMissing:
 # ---------------------------------------------------------------------------
 
 def _make_config_dirs(tmp_path: Path) -> Path:
-    """Create the standard config directory layout under tmp_path."""
+    """Create the config directory under tmp_path."""
     config_dir = tmp_path / "config"
-    (config_dir / "secrets" / "local").mkdir(parents=True)
-    (config_dir / "local").mkdir(parents=True)
+    config_dir.mkdir(parents=True)
     return config_dir
 
 
@@ -390,57 +411,58 @@ class TestInitEnvFiles:
     def test_creates_dev_public_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "dev.env").exists()
+        assert (config_dir / "dev" / "public.env").exists()
 
     def test_creates_prod_public_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "prod.env").exists()
+        assert (config_dir / "prod" / "public.env").exists()
 
     def test_creates_user_local_public_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "alice")
-        assert (config_dir / "local" / "alice.env").exists()
+        assert (config_dir / "local" / "alice" / "public.env").exists()
 
     def test_creates_dev_secret_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "secrets" / "dev.env").exists()
+        assert (config_dir / "dev" / "secrets.env").exists()
 
     def test_creates_prod_secret_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "secrets" / "prod.env").exists()
+        assert (config_dir / "prod" / "secrets.env").exists()
 
     def test_creates_user_secret_local_file(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "alice")
-        assert (config_dir / "secrets" / "local" / "alice.env").exists()
+        assert (config_dir / "local" / "alice" / "secrets.env").exists()
 
     def test_created_files_are_empty(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "dev.env").read_text() == ""
-        assert (config_dir / "secrets" / "dev.env").read_text() == ""
+        assert (config_dir / "dev" / "public.env").read_text() == ""
+        assert (config_dir / "dev" / "secrets.env").read_text() == ""
 
     def test_does_not_overwrite_existing_files(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
-        (config_dir / "dev.env").write_text("MY_VAR=devvalue\n")
+        (config_dir / "dev").mkdir()
+        (config_dir / "dev" / "public.env").write_text("MY_VAR=devvalue\n")
         _init_env_files(config_dir, "testuser")
-        assert "MY_VAR=devvalue" in (config_dir / "dev.env").read_text()
+        assert "MY_VAR=devvalue" in (config_dir / "dev" / "public.env").read_text()
 
     def test_idempotent_second_run(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
         # A second run should not raise and files should remain intact
         _init_env_files(config_dir, "testuser")
-        assert (config_dir / "dev.env").exists()
+        assert (config_dir / "dev" / "public.env").exists()
 
-    def test_no_template_files_created(self, tmp_path):
+    def test_no_flat_env_files_created(self, tmp_path):
         config_dir = _make_config_dirs(tmp_path)
         _init_env_files(config_dir, "testuser")
-        assert not (config_dir / "public.env").exists()
-        assert not (config_dir / "secrets" / "secret.env").exists()
+        assert not (config_dir / "dev.env").exists()
+        assert not (config_dir / "secrets").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -455,22 +477,22 @@ class TestInitConfigEnvFiles:
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
-        assert (config_dir / "dev.env").exists()
-        assert (config_dir / "prod.env").exists()
-        assert (config_dir / "local" / "testuser.env").exists()
-        assert (config_dir / "secrets" / "dev.env").exists()
-        assert (config_dir / "secrets" / "prod.env").exists()
-        assert (config_dir / "secrets" / "local" / "testuser.env").exists()
+        assert (config_dir / "dev" / "public.env").exists()
+        assert (config_dir / "dev" / "secrets.env").exists()
+        assert (config_dir / "prod" / "public.env").exists()
+        assert (config_dir / "prod" / "secrets.env").exists()
+        assert (config_dir / "local" / "testuser" / "public.env").exists()
+        assert (config_dir / "local" / "testuser" / "secrets.env").exists()
 
-    def test_no_template_files_created(self, tmp_path):
+    def test_no_flat_env_files_created(self, tmp_path):
         config_dir = tmp_path / "config"
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
-        assert not (config_dir / "public.env").exists()
-        assert not (config_dir / "secrets" / "secret.env").exists()
+        assert not (config_dir / "dev.env").exists()
+        assert not (config_dir / "secrets").exists()
 
     def test_env_files_created_even_without_age_key(self, tmp_path):
         """Env-file creation must happen even when no age key is found."""
@@ -480,8 +502,8 @@ class TestInitConfigEnvFiles:
             patch("dotconfig.init._get_current_user", return_value="testuser"),
         ):
             init_config(config_dir)
-        assert (config_dir / "dev.env").exists()
-        assert (config_dir / "secrets" / "dev.env").exists()
+        assert (config_dir / "dev" / "public.env").exists()
+        assert (config_dir / "dev" / "secrets.env").exists()
 
     def test_existing_env_files_not_overwritten(self, tmp_path):
         config_dir = tmp_path / "config"
@@ -491,8 +513,8 @@ class TestInitConfigEnvFiles:
         ):
             init_config(config_dir)
 
-        # Populate dev.env with values
-        (config_dir / "dev.env").write_text("APP_ENV=development\n")
+        # Populate dev/public.env with values
+        (config_dir / "dev" / "public.env").write_text("APP_ENV=development\n")
 
         with (
             patch("dotconfig.init._discover_age_key", return_value=None),
@@ -501,4 +523,4 @@ class TestInitConfigEnvFiles:
             init_config(config_dir)
 
         # Values must be preserved after second run
-        assert "APP_ENV=development" in (config_dir / "dev.env").read_text()
+        assert "APP_ENV=development" in (config_dir / "dev" / "public.env").read_text()
