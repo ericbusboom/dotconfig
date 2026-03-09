@@ -8,7 +8,6 @@ corresponding source file in config/, re-encrypting secrets with SOPS.
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -18,50 +17,47 @@ def _encrypt_sops(
 ) -> bool:
     """Encrypt content with SOPS and save to filepath.
 
-    Writes content to a temporary file, encrypts it in-place with sops,
-    then moves it to the target path.  Returns True on success.
+    Writes plaintext content to *filepath*, then encrypts it in-place
+    with sops.  Returns True on success.
 
     If *sops_config* is provided and exists, it is passed to sops via
     ``--config`` so that a non-dotfile ``sops.yaml`` inside the config
     directory is found even when it would not be auto-discovered.
+
+    The file path passed to sops is kept relative (to the current working
+    directory) so that sops ``path_regex`` creation rules match correctly.
     """
     try:
-        # Write plaintext to a temp file in the same directory so sops
-        # can infer creation rules from sops.yaml
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            suffix=".env", dir=filepath.parent if filepath.parent.exists() else None
-        )
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(content)
+
+        # Use a relative path so sops path_regex matching works correctly.
+        # Absolute paths can fail to match regex patterns like ".+/secrets\\.env$".
         try:
-            with os.fdopen(tmp_fd, "w") as f:
-                f.write(content)
+            sops_filepath = filepath.relative_to(Path.cwd())
+        except ValueError:
+            sops_filepath = filepath
 
-            cmd = ["sops"]
-            if sops_config is not None and sops_config.exists():
-                cmd += ["--config", str(sops_config)]
-            cmd += ["--encrypt", "--in-place", tmp_path]
+        cmd = ["sops"]
+        if sops_config is not None and sops_config.exists():
+            cmd += ["--config", str(sops_config)]
+        cmd += ["--encrypt", "--in-place", str(sops_filepath)]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(
+                f"Warning: sops encryption failed for {filepath}: {result.stderr.strip()}",
+                file=sys.stderr,
             )
-            if result.returncode != 0:
-                print(
-                    f"Warning: sops encryption failed for {filepath}: {result.stderr.strip()}",
-                    file=sys.stderr,
-                )
-                return False
+            # Remove the plaintext file on encryption failure
+            filepath.unlink(missing_ok=True)
+            return False
 
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            Path(tmp_path).replace(filepath)
-            return True
-        except Exception:
-            # Clean up temp file if anything goes wrong
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        return True
     except FileNotFoundError:
         print(
             f"Warning: sops not found — cannot encrypt {filepath}",

@@ -19,9 +19,11 @@ from pathlib import Path
 from typing import Optional
 
 # Path regex used in sops.yaml creation_rules.
-# Matches secrets.env (and other extensions) under any subdirectory of config/.
-# Covers the common config-file extensions SOPS supports.
-_SOPS_PATH_REGEX = r"config/.+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
+# Matches secrets.env (and other extensions) under any subdirectory.
+# Because sops.yaml lives inside config/, sops resolves file paths relative
+# to the config file's directory — so the regex must NOT include a "config/"
+# prefix.
+_SOPS_PATH_REGEX = r".+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
 
 # Matches a valid age secret key line.
 _AGE_SECRET_KEY_RE = re.compile(r"^AGE-SECRET-KEY-[A-Za-z0-9]+$")

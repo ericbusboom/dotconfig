@@ -204,7 +204,7 @@ class TestUpdateSopsYaml:
     def test_created_file_contains_path_regex(self, tmp_path):
         _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
         content = (tmp_path / "sops.yaml").read_text()
-        assert "config/.+/secrets" in content
+        assert ".+/secrets" in content
 
     def test_does_not_overwrite_when_key_already_listed(self, tmp_path):
         existing = (
