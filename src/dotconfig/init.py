@@ -18,10 +18,10 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Path regex used in .sops.yaml creation_rules.
-# Matches all files under config/secrets/ (including local/ subdirectory).
+# Path regex used in sops.yaml creation_rules.
+# Matches secrets.env (and other extensions) under any subdirectory of config/.
 # Covers the common config-file extensions SOPS supports.
-_SOPS_PATH_REGEX = r"config/secrets/.+\.(?:env|json|yaml|yml|txt|conf)$"
+_SOPS_PATH_REGEX = r"config/.+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
 
 # Matches a valid age secret key line.
 _AGE_SECRET_KEY_RE = re.compile(r"^AGE-SECRET-KEY-[A-Za-z0-9]+$")
@@ -182,21 +182,21 @@ def _add_key_to_sops_yaml(content: str, public_key: str) -> str:
 
     if not inserted:
         result.append(
-            f"# dotconfig init: please add {public_key} to the age: field in .sops.yaml"
+            f"# dotconfig init: please add {public_key} to the age: field in sops.yaml"
         )
 
     return "\n".join(result) + "\n"
 
 
-def _update_sops_yaml(project_dir: Path, public_key: str) -> None:
-    """Create or update ``.sops.yaml`` in *project_dir* with *public_key*.
+def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
+    """Create or update ``sops.yaml`` in *config_dir* with *public_key*.
 
-    * If ``.sops.yaml`` does not exist, a new file is created with a default
+    * If ``sops.yaml`` does not exist, a new file is created with a default
       ``creation_rules`` block covering ``config/secrets/``.
     * If it already exists and the key is already listed, nothing is changed.
     * Otherwise the key is appended to the ``age:`` list.
     """
-    sops_yaml = project_dir / ".sops.yaml"
+    sops_yaml = config_dir / "sops.yaml"
 
     if not sops_yaml.exists():
         content = (
@@ -244,47 +244,44 @@ def _init_env_files(config_dir: Path, current_user: str) -> None:
 
     Creates the following files if they do not already exist (empty):
 
-      - ``config/dev.env``
-      - ``config/prod.env``
-      - ``config/local/<current_user>.env``
-      - ``config/secrets/dev.env``
-      - ``config/secrets/prod.env``
-      - ``config/secrets/local/<current_user>.env``
+      - ``config/dev/public.env``
+      - ``config/dev/secrets.env``
+      - ``config/prod/public.env``
+      - ``config/prod/secrets.env``
+      - ``config/local/<current_user>/public.env``
+      - ``config/local/<current_user>/secrets.env``
 
+    Subdirectories are created automatically if they do not already exist.
     On every run, existing files are left completely untouched.
     """
     print("\nCreating environment files:")
 
     for env_name in _DEFAULT_ENVS:
-        _create_env_if_missing(config_dir / f"{env_name}.env")
-    _create_env_if_missing(config_dir / "local" / f"{current_user}.env")
+        env_dir = config_dir / env_name
+        env_dir.mkdir(parents=True, exist_ok=True)
+        _create_env_if_missing(env_dir / "public.env")
+        _create_env_if_missing(env_dir / "secrets.env")
 
-    for env_name in _DEFAULT_ENVS:
-        _create_env_if_missing(config_dir / "secrets" / f"{env_name}.env")
-    _create_env_if_missing(
-        config_dir / "secrets" / "local" / f"{current_user}.env"
-    )
+    local_user_dir = config_dir / "local" / current_user
+    local_user_dir.mkdir(parents=True, exist_ok=True)
+    _create_env_if_missing(local_user_dir / "public.env")
+    _create_env_if_missing(local_user_dir / "secrets.env")
 
 
 def init_config(config_dir: Path) -> None:
     """Initialise the dotconfig directory structure.
 
-    Creates the four standard directories under *config_dir*:
+    Creates the two standard top-level directories under *config_dir*:
 
     * ``config/``
-    * ``config/secrets/``
     * ``config/local/``
-    * ``config/secrets/local/``
 
-    If a directory already exists it is reported as **ok** and left
-    untouched.
+    Then creates empty env files (and their parent directories) for the
+    ``dev`` and ``prod`` deployments and for the current OS user:
 
-    Then creates empty env files for the ``dev`` and ``prod`` deployments
-    and for the current OS user (if they do not already exist):
-
-    * ``config/dev.env``, ``config/prod.env``, ``config/local/<user>.env``
-    * ``config/secrets/dev.env``, ``config/secrets/prod.env``,
-      ``config/secrets/local/<user>.env``
+    * ``config/dev/public.env``, ``config/dev/secrets.env``
+    * ``config/prod/public.env``, ``config/prod/secrets.env``
+    * ``config/local/<user>/public.env``, ``config/local/<user>/secrets.env``
 
     Running ``init`` more than once is safe: existing files are always left
     completely untouched.
@@ -292,16 +289,14 @@ def init_config(config_dir: Path) -> None:
     After directory and env-file setup, the command attempts to discover an
     existing age private key (following SOPS key-discovery priority order),
     derives the corresponding public key, and ensures that key is listed in
-    ``.sops.yaml`` at the project root.  If no key is found, guidance is
+    ``sops.yaml`` inside *config_dir*.  If no key is found, guidance is
     printed instead.
     """
     print("Initialising dotconfig directory structure:")
 
     dirs = [
         config_dir,
-        config_dir / "secrets",
         config_dir / "local",
-        config_dir / "secrets" / "local",
     ]
 
     for d in dirs:
@@ -344,14 +339,13 @@ def init_config(config_dir: Path) -> None:
     public_key = _derive_public_key(secret_key)
     if public_key is None:
         print(
-            "  Warning: could not derive public key — skipping .sops.yaml update",
+            "  Warning: could not derive public key — skipping sops.yaml update",
             file=sys.stderr,
         )
         return
 
     print(f"  Public key:   {public_key}")
 
-    # .sops.yaml lives at the project root (parent of config_dir)
-    project_dir = config_dir.resolve().parent
-    print("\nUpdating .sops.yaml:")
-    _update_sops_yaml(project_dir, public_key)
+    # sops.yaml lives inside config_dir
+    print("\nUpdating sops.yaml:")
+    _update_sops_yaml(config_dir, public_key)

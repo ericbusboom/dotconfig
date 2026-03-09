@@ -48,10 +48,10 @@ def load_config(
     """Assemble config source files into a single .env file.
 
     Reads from:
-      - config/{common_name}.env            (public common config)
-      - config/secrets/{common_name}.env    (SOPS-encrypted secrets)
-      - config/local/{local_name}.env       (public local overrides, optional)
-      - config/secrets/local/{local_name}.env (encrypted local secrets, optional)
+      - config/{common_name}/public.env            (public common config)
+      - config/{common_name}/secrets.env           (SOPS-encrypted secrets)
+      - config/local/{local_name}/public.env       (public local overrides, optional)
+      - config/local/{local_name}/secrets.env      (encrypted local secrets, optional)
 
     Writes a .env with marked sections:
       # CONFIG_COMMON={common_name}
@@ -68,7 +68,7 @@ def load_config(
 
     Later sections override earlier ones (last-write-wins when shell-sourced).
     """
-    common_env = config_dir / f"{common_name}.env"
+    common_env = config_dir / common_name / "public.env"
     if not common_env.exists():
         print(
             f"Error: common config file not found: {common_env}",
@@ -93,7 +93,7 @@ def load_config(
     # --- Secrets (common) section ---
     parts.append("")
     parts.append(f"# --- secrets ({common_name}) ---")
-    secrets_env = config_dir / "secrets" / f"{common_name}.env"
+    secrets_env = config_dir / common_name / "secrets.env"
     if secrets_env.exists():
         decrypted = _decrypt_sops(secrets_env)
         if decrypted and decrypted.strip():
@@ -108,7 +108,7 @@ def load_config(
         # --- Public-local section ---
         parts.append("")
         parts.append(f"# --- public-local ({local_name}) ---")
-        local_env = config_dir / "local" / f"{local_name}.env"
+        local_env = config_dir / "local" / local_name / "public.env"
         if local_env.exists():
             local_content = local_env.read_text().strip()
             if local_content:
@@ -122,7 +122,7 @@ def load_config(
         # --- Secrets-local section ---
         parts.append("")
         parts.append(f"# --- secrets-local ({local_name}) ---")
-        secrets_local = config_dir / "secrets" / "local" / f"{local_name}.env"
+        secrets_local = config_dir / "local" / local_name / "secrets.env"
         if secrets_local.exists():
             decrypted = _decrypt_sops(secrets_local)
             if decrypted and decrypted.strip():
