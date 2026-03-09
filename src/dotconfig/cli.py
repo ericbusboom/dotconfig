@@ -17,6 +17,7 @@ import click
 from pathlib import Path
 
 from .init import init_config
+from .keys import show_keys
 from .load import load_config
 from .save import save_config
 
@@ -144,3 +145,19 @@ def save(common_name: str, local_name: str, env_file: str, config_dir: str) -> N
         override_common=common_name,
         override_local=local_name,
     )
+
+
+@cli.command()
+def keys() -> None:
+    """Show age encryption key status and configuration.
+
+    Inspects your environment for age keys, reports where SOPS will
+    find your secret key, shows the derived public key, and prints
+    export statements for configuring environment variables.
+
+    Example:
+
+    \b
+        dotconfig keys
+    """
+    show_keys()
