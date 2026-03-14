@@ -123,7 +123,7 @@ back to the source files:
 # CONFIG_COMMON=dev
 # CONFIG_LOCAL=ericbusboom
 
-# --- public (dev) ---
+#@dotconfig: public (dev)
 APP_DOMAIN=inventory.example.com
 NODE_ENV=development
 PORT=3000
@@ -133,26 +133,27 @@ DO_SPACES_ENDPOINT=https://sfo3.digitaloceanspaces.com
 DO_SPACES_BUCKET=my-bucket
 DO_SPACES_REGION=sfo3
 
-# --- secrets (dev) ---
+#@dotconfig: secrets (dev)
 SESSION_SECRET=abc123...
 GITHUB_CLIENT_ID=...
 GOOGLE_CLIENT_ID=...
 
-# --- public-local (ericbusboom) ---
+#@dotconfig: public-local (ericbusboom)
 DEV_DOCKER_CONTEXT=orbstack
 PROD_DOCKER_CONTEXT=swarm1
 QR_DOMAIN=http://192.168.1.40:5173/
 SOPS_AGE_KEY_FILE=/Users/ericbusboom/.config/sops/age/keys.txt
 
-# --- secrets-local (ericbusboom) ---
+#@dotconfig: secrets-local (ericbusboom)
 ```
 
 **Last-write-wins**: when the file is shell-sourced (`set -a; . .env; set +a`),
 later sections override earlier ones.  Local overrides common; secrets
 override public.
 
-The two metadata comments (`CONFIG_COMMON`, `CONFIG_LOCAL`) tell `dotconfig
-save` where to write each section back.
+The `#@dotconfig:` markers are unique to dotconfig — do not use this prefix
+in your own comments.  The two metadata comments (`CONFIG_COMMON`,
+`CONFIG_LOCAL`) tell `dotconfig save` where to write each section back.
 
 ---
 
@@ -194,10 +195,10 @@ dotconfig load dev --output .env.dev
 
 | Source file | Section in `.env` |
 |---|---|
-| `config/{common}/public.env` | `# --- public ({common}) ---` |
-| `config/{common}/secrets.env` (SOPS-encrypted) | `# --- secrets ({common}) ---` |
-| `config/local/{local}/public.env` | `# --- public-local ({local}) ---` |
-| `config/local/{local}/secrets.env` (SOPS-encrypted) | `# --- secrets-local ({local}) ---` |
+| `config/{common}/public.env` | `#@dotconfig: public ({common})` |
+| `config/{common}/secrets.env` (SOPS-encrypted) | `#@dotconfig: secrets ({common})` |
+| `config/local/{local}/public.env` | `#@dotconfig: public-local ({local})` |
+| `config/local/{local}/secrets.env` (SOPS-encrypted) | `#@dotconfig: secrets-local ({local})` |
 
 If a secrets file is absent or SOPS is unavailable, the section is written
 as empty with a warning — the command does not abort.
@@ -239,10 +240,10 @@ dotconfig save --env-file .env.staging
 
 | Section in `.env` | Destination file |
 |---|---|
-| `# --- public ({common}) ---` | `config/{common}/public.env` (plaintext) |
-| `# --- secrets ({common}) ---` | `config/{common}/secrets.env` (SOPS-encrypted) |
-| `# --- public-local ({local}) ---` | `config/local/{local}/public.env` (plaintext) |
-| `# --- secrets-local ({local}) ---` | `config/local/{local}/secrets.env` (SOPS-encrypted, only if non-empty) |
+| `#@dotconfig: public ({common})` | `config/{common}/public.env` (plaintext) |
+| `#@dotconfig: secrets ({common})` | `config/{common}/secrets.env` (SOPS-encrypted) |
+| `#@dotconfig: public-local ({local})` | `config/local/{local}/public.env` (plaintext) |
+| `#@dotconfig: secrets-local ({local})` | `config/local/{local}/secrets.env` (SOPS-encrypted, only if non-empty) |
 
 `dotconfig save` requires a dotconfig-managed `.env` (one that was produced
 by `dotconfig load`) because it relies on the `CONFIG_COMMON` metadata

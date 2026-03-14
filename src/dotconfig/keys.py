@@ -138,3 +138,15 @@ def show_keys() -> None:
         print()
         info("Or inline the key directly:")
         item(f'  export SOPS_AGE_KEY="{secret_key}"')
+
+    # --- Codespaces / CI secret guidance ---
+    heading("☁️  GitHub Codespaces / CI:")
+    info("To use your age key in Codespaces, add it as a repository secret:")
+    print()
+    item("  Secret name:  SOPS_AGE_KEY")
+    item(f"  Secret value: {secret_key}")
+    print()
+    info("Via the GitHub CLI:")
+    item(f'  gh secret set SOPS_AGE_KEY --body "{secret_key}"')
+    print()
+    info("Or set it in repo Settings → Secrets and variables → Codespaces.")

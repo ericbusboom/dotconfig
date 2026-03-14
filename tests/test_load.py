@@ -68,13 +68,13 @@ class TestLoadConfigCommonOnly:
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
-        assert "# --- public (dev) ---" in out.read_text()
+        assert "#@dotconfig: public (dev)" in out.read_text()
 
     def test_secrets_section_marker_present(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
-        assert "# --- secrets (dev) ---" in out.read_text()
+        assert "#@dotconfig: secrets (dev)" in out.read_text()
 
     def test_public_variables_included(self, config_dir, tmp_path):
         out = tmp_path / ".env"
@@ -116,13 +116,13 @@ class TestLoadConfigWithLocal:
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", "alice", config_dir, out)
-        assert "# --- public-local (alice) ---" in out.read_text()
+        assert "#@dotconfig: public-local (alice)" in out.read_text()
 
     def test_secrets_local_section_marker_present(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", "alice", config_dir, out)
-        assert "# --- secrets-local (alice) ---" in out.read_text()
+        assert "#@dotconfig: secrets-local (alice)" in out.read_text()
 
     def test_local_variables_included(self, config_dir, tmp_path):
         out = tmp_path / ".env"
@@ -138,10 +138,10 @@ class TestLoadConfigWithLocal:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", "alice", config_dir, out)
         text = out.read_text()
-        idx_public = text.index("# --- public (dev) ---")
-        idx_secrets = text.index("# --- secrets (dev) ---")
-        idx_local = text.index("# --- public-local (alice) ---")
-        idx_secrets_local = text.index("# --- secrets-local (alice) ---")
+        idx_public = text.index("#@dotconfig: public (dev)")
+        idx_secrets = text.index("#@dotconfig: secrets (dev)")
+        idx_local = text.index("#@dotconfig: public-local (alice)")
+        idx_secrets_local = text.index("#@dotconfig: secrets-local (alice)")
         assert idx_public < idx_secrets < idx_local < idx_secrets_local
 
     def test_prod_environment(self, config_dir, tmp_path):
@@ -185,7 +185,7 @@ class TestLoadConfigErrors:
             load_config("dev", None, config_dir, out)
         text = out.read_text()
         # Section marker still present; variables not included
-        assert "# --- secrets (dev) ---" in text
+        assert "#@dotconfig: secrets (dev)" in text
         assert "SESSION_SECRET" not in text
 
 

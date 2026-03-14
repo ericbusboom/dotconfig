@@ -273,6 +273,86 @@ def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
     info(f"added public key {public_key}")
 
 
+_AGENTS_MD_CONTENT = """\
+# config/ — dotconfig managed environment configuration
+
+This directory is managed by [dotconfig](https://pypi.org/project/dotconfig/),
+an environment configuration cascade manager for `.env` files.
+
+## Quick reference
+
+```bash
+# Initialise (creates this directory structure + age encryption setup)
+dotconfig init
+
+# Load config into .env (assembles layers into a single file)
+dotconfig load dev yourname       # dev environment + local overrides
+dotconfig load prod               # prod only, no local overrides
+
+# Save .env edits back to source files
+dotconfig save
+```
+
+## Directory layout
+
+```
+config/
+  sops.yaml                    # SOPS encryption rules
+  dev/
+    public.env                 # Public config for "dev"
+    secrets.env                # SOPS-encrypted secrets for "dev"
+  prod/
+    public.env                 # Public config for "prod"
+    secrets.env                # SOPS-encrypted secrets for "prod"
+  local/
+    <username>/
+      public.env               # Per-developer public overrides
+      secrets.env              # Per-developer encrypted secrets (optional)
+```
+
+## How it works
+
+`dotconfig load` assembles a single `.env` from four layers in
+last-write-wins order:
+
+1. `config/{env}/public.env` — shared public config
+2. `config/{env}/secrets.env` — shared SOPS-encrypted secrets
+3. `config/local/{user}/public.env` — personal public overrides
+4. `config/local/{user}/secrets.env` — personal encrypted secrets (optional)
+
+The generated `.env` contains marked sections (`#@dotconfig: public (dev)`, etc.)
+so `dotconfig save` can round-trip edits back to the correct source files.
+
+## Important notes
+
+- **Do not edit `.env` section markers** — they are used for round-tripping.
+- **`.env` is generated** — add it to `.gitignore`. The source of truth is
+  this `config/` directory.
+- **Secrets files are SOPS-encrypted** — use `dotconfig save` (not manual
+  sops commands) to re-encrypt after editing `.env`.
+- Environment names are open-ended: dev, prod, test, staging, ci, etc.
+"""
+
+
+def _write_agents_md(config_dir: Path) -> None:
+    """Write an AGENTS.md file into *config_dir* explaining dotconfig usage.
+
+    If the file already exists it is overwritten, since it is generated
+    content that should stay in sync with the current version of dotconfig.
+    """
+    agents_md = config_dir / "AGENTS.md"
+    if agents_md.exists():
+        existing = agents_md.read_text()
+        if existing == _AGENTS_MD_CONTENT:
+            ok(str(agents_md))
+            return
+        agents_md.write_text(_AGENTS_MD_CONTENT)
+        updated(str(agents_md))
+    else:
+        agents_md.write_text(_AGENTS_MD_CONTENT)
+        created(str(agents_md))
+
+
 def _get_current_user() -> str:
     """Return the current OS username."""
     return getpass.getuser()
@@ -364,6 +444,10 @@ def init_config(config_dir: Path) -> None:
     # ---- Env-file setup ----------------------------------------
     current_user = _get_current_user()
     _init_env_files(config_dir, current_user)
+
+    # ---- AGENTS.md -------------------------------------------------------
+    heading("📄 Agent documentation:")
+    _write_agents_md(config_dir)
 
     # ---- Key setup --------------------------------------------------------
     heading("🔑 Setting up age encryption key:")

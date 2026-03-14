@@ -16,12 +16,12 @@ from dotconfig.save import _encrypt_sops, parse_env_file, save_config
 SAMPLE_ENV_COMMON_ONLY = """\
 # CONFIG_COMMON=dev
 
-# --- public (dev) ---
+#@dotconfig: public (dev)
 APP_DOMAIN=example.com
 NODE_ENV=development
 PORT=3000
 
-# --- secrets (dev) ---
+#@dotconfig: secrets (dev)
 SESSION_SECRET=abc123
 GITHUB_CLIENT_ID=gh_xxx
 """
@@ -30,36 +30,37 @@ SAMPLE_ENV_WITH_LOCAL = """\
 # CONFIG_COMMON=dev
 # CONFIG_LOCAL=alice
 
-# --- public (dev) ---
+#@dotconfig: public (dev)
 APP_DOMAIN=example.com
 NODE_ENV=development
 PORT=3000
 
-# --- secrets (dev) ---
+#@dotconfig: secrets (dev)
 SESSION_SECRET=abc123
 GITHUB_CLIENT_ID=gh_xxx
 
-# --- public-local (alice) ---
+#@dotconfig: public-local (alice)
 DEV_DOCKER_CONTEXT=orbstack
 QR_DOMAIN=http://192.168.1.1:5173/
+DEPLOYMENT=dev
 
-# --- secrets-local (alice) ---
+#@dotconfig: secrets-local (alice)
 """
 
 SAMPLE_ENV_WITH_LOCAL_SECRETS = """\
 # CONFIG_COMMON=dev
 # CONFIG_LOCAL=alice
 
-# --- public (dev) ---
+#@dotconfig: public (dev)
 APP_DOMAIN=example.com
 
-# --- secrets (dev) ---
+#@dotconfig: secrets (dev)
 SESSION_SECRET=abc123
 
-# --- public-local (alice) ---
+#@dotconfig: public-local (alice)
 QR_DOMAIN=http://192.168.1.1:5173/
 
-# --- secrets-local (alice) ---
+#@dotconfig: secrets-local (alice)
 PERSONAL_TOKEN=pt_secret
 """
 
@@ -123,6 +124,24 @@ class TestParseEnvFile:
         assert common is None
         assert local is None
         assert sections == {}
+
+    def test_legacy_markers_still_parsed(self):
+        """Old-style # --- label --- markers are still recognised."""
+        legacy = """\
+# CONFIG_COMMON=dev
+
+# --- public (dev) ---
+APP_DOMAIN=example.com
+
+# --- secrets (dev) ---
+SESSION_SECRET=abc123
+"""
+        common, _, sections = parse_env_file(legacy)
+        assert common == "dev"
+        assert "public (dev)" in sections
+        assert "APP_DOMAIN=example.com" in sections["public (dev)"]
+        assert "secrets (dev)" in sections
+        assert "SESSION_SECRET=abc123" in sections["secrets (dev)"]
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +326,25 @@ class TestSaveConfigOverride:
             save_config(env_file, config_dir)
         assert (config_dir / "dev" / "public.env").exists()
         assert (config_dir / "local" / "alice" / "public.env").exists()
+
+    def test_override_common_rewrites_deployment_variable(self, env_file, config_dir):
+        """DEPLOYMENT= is rewritten to match the target deployment."""
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL)  # has DEPLOYMENT=dev
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_common="prod")
+        local_file = config_dir / "local" / "alice" / "public.env"
+        content = local_file.read_text()
+        assert "DEPLOYMENT=prod" in content
+        assert "DEPLOYMENT=dev" not in content
+
+    def test_same_deployment_keeps_deployment_variable(self, env_file, config_dir):
+        """DEPLOYMENT= is unchanged when saving to the same deployment."""
+        env_file.write_text(SAMPLE_ENV_WITH_LOCAL)  # has DEPLOYMENT=dev
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        local_file = config_dir / "local" / "alice" / "public.env"
+        content = local_file.read_text()
+        assert "DEPLOYMENT=dev" in content
 
     def test_override_common_no_local_in_env(self, env_file, config_dir):
         """override_local is ignored when .env has no local sections."""

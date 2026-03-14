@@ -11,11 +11,18 @@ dotconfig load <common_name> [local_name]
 
 dotconfig save
     Write .env sections back to their config/ source files.
+
+dotconfig keys
+    Show age encryption key status and configuration.
+
+dotconfig agent
+    Print full operational instructions for AI agents.
 """
 
 import click
 from pathlib import Path
 
+from .agent import show_agent_instructions
 from .init import init_config
 from .keys import show_keys
 from .load import load_config
@@ -30,6 +37,9 @@ def cli() -> None:
     Manages layered .env configuration assembled from multiple source
     files (common config, SOPS-encrypted secrets, and developer-local
     overrides) stored under a config/ directory.
+
+    \b
+    AI agents: run "dotconfig agent" for full operational instructions.
     """
 
 
@@ -161,3 +171,19 @@ def keys() -> None:
         dotconfig keys
     """
     show_keys()
+
+
+@cli.command()
+def agent() -> None:
+    """Print full operational instructions for AI agents.
+
+    Outputs a comprehensive markdown document describing how dotconfig
+    works, all available commands, the directory layout, the .env format,
+    and rules that agents should follow when operating on configuration.
+
+    Example:
+
+    \b
+        dotconfig agent
+    """
+    show_agent_instructions()

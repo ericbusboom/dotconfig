@@ -62,13 +62,13 @@ def load_config(
       # CONFIG_COMMON={common_name}
       # CONFIG_LOCAL={local_name}   (if local_name is provided)
 
-      # --- public ({common_name}) ---
+      #@dotconfig: public ({common_name})
       ...
-      # --- secrets ({common_name}) ---
+      #@dotconfig: secrets ({common_name})
       ...
-      # --- public-local ({local_name}) ---   (if local_name is provided)
+      #@dotconfig: public-local ({local_name})   (if local_name is provided)
       ...
-      # --- secrets-local ({local_name}) ---  (if local_name is provided)
+      #@dotconfig: secrets-local ({local_name})  (if local_name is provided)
       ...
 
     Later sections override earlier ones (last-write-wins when shell-sourced).
@@ -92,14 +92,14 @@ def load_config(
     parts.append("")
 
     # --- Public (common) section ---
-    parts.append(f"# --- public ({common_name}) ---")
+    parts.append(f"#@dotconfig: public ({common_name})")
     public_content = common_env.read_text().strip()
     if public_content:
         parts.append(public_content)
 
     # --- Secrets (common) section ---
     parts.append("")
-    parts.append(f"# --- secrets ({common_name}) ---")
+    parts.append(f"#@dotconfig: secrets ({common_name})")
     secrets_env = config_dir / common_name / "secrets.env"
     if secrets_env.exists():
         decrypted = _decrypt_sops(secrets_env, sops_config)
@@ -111,7 +111,7 @@ def load_config(
     if local_name:
         # --- Public-local section ---
         parts.append("")
-        parts.append(f"# --- public-local ({local_name}) ---")
+        parts.append(f"#@dotconfig: public-local ({local_name})")
         local_env = config_dir / "local" / local_name / "public.env"
         if local_env.exists():
             local_content = local_env.read_text().strip()
@@ -122,7 +122,7 @@ def load_config(
 
         # --- Secrets-local section ---
         parts.append("")
-        parts.append(f"# --- secrets-local ({local_name}) ---")
+        parts.append(f"#@dotconfig: secrets-local ({local_name})")
         secrets_local = config_dir / "local" / local_name / "secrets.env"
         if secrets_local.exists():
             decrypted = _decrypt_sops(secrets_local, sops_config)

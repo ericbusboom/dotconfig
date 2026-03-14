@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from dotconfig.init import (
+    _AGENTS_MD_CONTENT,
     _add_key_to_sops_yaml,
     _create_env_if_missing,
     _derive_public_key,
@@ -18,6 +19,7 @@ from dotconfig.init import (
     _is_age_installed,
     _read_key_from_file,
     _update_sops_yaml,
+    _write_agents_md,
     init_config,
 )
 
@@ -449,6 +451,40 @@ class TestInitConfigKeySetup:
 
 
 # ---------------------------------------------------------------------------
+# _write_agents_md
+# ---------------------------------------------------------------------------
+
+class TestWriteAgentsMd:
+    def test_creates_agents_md(self, tmp_path):
+        _write_agents_md(tmp_path)
+        agents_md = tmp_path / "AGENTS.md"
+        assert agents_md.exists()
+        assert agents_md.read_text() == _AGENTS_MD_CONTENT
+
+    def test_reports_created_for_new_file(self, tmp_path, capsys):
+        _write_agents_md(tmp_path)
+        assert "+" in capsys.readouterr().out
+
+    def test_unchanged_file_reports_ok(self, tmp_path, capsys):
+        (tmp_path / "AGENTS.md").write_text(_AGENTS_MD_CONTENT)
+        _write_agents_md(tmp_path)
+        out = capsys.readouterr().out
+        assert "✓" in out
+
+    def test_overwrites_stale_content(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text("old content")
+        _write_agents_md(tmp_path)
+        assert agents_md.read_text() == _AGENTS_MD_CONTENT
+
+    def test_reports_updated_for_stale_content(self, tmp_path, capsys):
+        (tmp_path / "AGENTS.md").write_text("old content")
+        _write_agents_md(tmp_path)
+        out = capsys.readouterr().out
+        assert "~" in out
+
+
+# ---------------------------------------------------------------------------
 # _get_current_user
 # ---------------------------------------------------------------------------
 
@@ -607,6 +643,18 @@ class TestInitConfigEnvFiles:
             init_config(config_dir)
         assert (config_dir / "dev" / "public.env").exists()
         assert (config_dir / "dev" / "secrets.env").exists()
+
+    def test_agents_md_created(self, tmp_path):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        agents_md = config_dir / "AGENTS.md"
+        assert agents_md.exists()
+        assert "dotconfig" in agents_md.read_text()
 
     def test_existing_env_files_not_overwritten(self, tmp_path):
         config_dir = tmp_path / "config"

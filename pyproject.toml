@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dotconfig"
-version = "0.20260308.2ß"
+version = "0.20260311.1"
 description = "Environment configuration cascade manager for .env files"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -36,6 +36,9 @@ dev = [
     "pytest>=7.0",
     "pytest-cov",
 ]
+
+[tool.setuptools.package-data]
+dotconfig = ["*.md"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

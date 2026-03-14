@@ -87,3 +87,15 @@ class TestShowKeys:
         out = capsys.readouterr().out
         assert "public key" in out
         assert FAKE_PUBLIC_KEY in out
+
+    def test_shows_codespaces_guidance(self, capsys):
+        with (
+            patch("dotconfig.keys._is_age_installed", return_value=True),
+            patch.dict("os.environ", {"SOPS_AGE_KEY": FAKE_SECRET_KEY}, clear=True),
+            patch("dotconfig.keys._read_key_from_file", return_value=None),
+            patch("dotconfig.keys._derive_public_key_quiet", return_value=FAKE_PUBLIC_KEY),
+        ):
+            show_keys()
+        out = capsys.readouterr().out
+        assert "Codespaces" in out
+        assert "gh secret set SOPS_AGE_KEY" in out

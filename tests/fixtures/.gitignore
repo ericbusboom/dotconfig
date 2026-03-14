@@ -1,0 +1,4 @@
+# Working copies (generated from *.source at test time)
+complete/
+missing-secrets/
+empty/

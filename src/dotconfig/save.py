@@ -14,6 +14,15 @@ from typing import Dict, Optional, Tuple
 from .output import error, heading, ok, warn
 
 
+def _rewrite_deployment(body: str, target_deployment: str) -> str:
+    """Replace the value of DEPLOYMENT= with *target_deployment*."""
+    lines = body.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("DEPLOYMENT="):
+            lines[i] = f"DEPLOYMENT={target_deployment}"
+    return "\n".join(lines)
+
+
 def _encrypt_sops(
     content: str, filepath: Path, sops_config: Optional[Path] = None
 ) -> bool:
@@ -75,8 +84,11 @@ def parse_env_file(
       - CONFIG_LOCAL metadata value (may be None)
       - A dict mapping section labels to their variable content
 
-    Section labels are the full strings inside ``# --- ... ---`` markers,
+    Section labels are the strings after ``#@dotconfig:`` markers,
     e.g. ``"public (dev)"``, ``"secrets (dev)"``, ``"public-local (alice)"``.
+
+    Also recognises the legacy ``# --- label ---`` format for backward
+    compatibility.
     """
     common_name: Optional[str] = None
     local_name: Optional[str] = None
@@ -92,8 +104,14 @@ def parse_env_file(
             local_name = line.split("=", 1)[1].strip()
             continue
 
-        # Section marker: # --- <label> ---
-        if line.startswith("# --- ") and line.endswith(" ---"):
+        # New marker format: #@dotconfig: <label>
+        if line.startswith("#@dotconfig: "):
+            if current_section is not None:
+                sections[current_section] = "\n".join(current_lines).strip()
+            current_section = line[len("#@dotconfig: "):].strip()
+            current_lines = []
+        # Legacy marker format: # --- <label> ---
+        elif line.startswith("# --- ") and line.endswith(" ---"):
             if current_section is not None:
                 sections[current_section] = "\n".join(current_lines).strip()
             current_section = line[6:-4].strip()
@@ -157,6 +175,12 @@ def save_config(
     save_local = override_local if override_local is not None else local_name
 
     saved = []
+
+    # When saving to a different deployment, rewrite the DEPLOYMENT variable
+    # so it reflects the target environment, not the one that was loaded.
+    if save_common != common_name:
+        for key in sections:
+            sections[key] = _rewrite_deployment(sections[key], save_common)
 
     # Locate the sops config file so it can be passed explicitly to sops.
     # sops.yaml is a non-dotfile and is not auto-discovered by sops, so we
