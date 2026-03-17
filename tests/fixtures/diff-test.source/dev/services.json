@@ -1,0 +1,17 @@
+{
+  "api": {
+    "host": "api.dev.internal",
+    "port": 8080,
+    "timeout_ms": 5000,
+    "retries": 3
+  },
+  "cdn": {
+    "endpoint": "https://cdn.dev.example.com",
+    "cache_ttl": 300
+  },
+  "notifications": {
+    "enabled": true,
+    "provider": "sendgrid",
+    "from_email": "noreply@dev.example.com"
+  }
+}

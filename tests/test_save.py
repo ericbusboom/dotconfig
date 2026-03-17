@@ -6,7 +6,18 @@ from unittest.mock import call, patch
 
 import pytest
 
-from dotconfig.save import _encrypt_sops, parse_env_file, save_config, save_file
+from dotconfig.save import (
+    REDACTED,
+    _count_leaves,
+    _dict_diff,
+    _encrypt_sops,
+    _is_leaf_secret,
+    _split_env_secrets,
+    _split_secrets,
+    parse_env_file,
+    save_config,
+    save_file,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -407,12 +418,270 @@ class TestSaveFile:
         save_file("staging", None, "app.yaml", config_dir, source=src)
         assert (config_dir / "staging" / "app.yaml").exists()
 
-    def test_both_deploy_and_local_exits(self, config_dir, tmp_path):
-        """Specifying both deploy and local with --file is an error."""
+    def test_diff_save_with_both_deploy_and_local(self, config_dir, tmp_path):
+        """Both -d and -l triggers diff-save for structured files."""
+        # Set up existing deploy file
+        (config_dir / "dev").mkdir(parents=True)
+        (config_dir / "dev" / "app.yaml").write_text("key: base\nextra: keep\n")
+        # Source has a change
+        src = tmp_path / "app.yaml"
+        src.write_text("key: changed\nextra: keep\nnew: added\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", "alice", "app.yaml", config_dir, source=src)
+        local_file = config_dir / "local" / "alice" / "app.yaml"
+        assert local_file.exists()
+        content = local_file.read_text()
+        assert "changed" in content
+        assert "added" in content
+        assert "keep" not in content  # unchanged, omitted from diff
+
+    def test_encrypt_calls_encrypt_sops(self, config_dir, tmp_path):
+        """save_file with encrypt=True calls _encrypt_sops."""
+        src = tmp_path / "secrets.yaml"
+        src.write_text("secret: plaintext\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt) as mock:
+            save_file("dev", None, "secrets.yaml", config_dir, source=src, encrypt=True)
+        mock.assert_called_once()
+        assert (config_dir / "dev" / "secrets.yaml").exists()
+
+    def test_encrypt_false_does_not_call_sops(self, config_dir, tmp_path):
+        """save_file without encrypt does not call _encrypt_sops."""
+        src = tmp_path / "app.yaml"
+        src.write_text("key: value\n")
+        with patch("dotconfig.save._encrypt_sops") as mock:
+            save_file("dev", None, "app.yaml", config_dir, source=src, encrypt=False)
+        mock.assert_not_called()
+
+    def test_encrypt_failure_exits(self, config_dir, tmp_path):
+        """save_file exits if encryption fails."""
+        src = tmp_path / "secrets.yaml"
+        src.write_text("secret: plaintext\n")
+        with patch("dotconfig.save._encrypt_sops", return_value=False):
+            with pytest.raises(SystemExit):
+                save_file("dev", None, "secrets.yaml", config_dir, source=src, encrypt=True)
+
+
+# ---------------------------------------------------------------------------
+# _split_secrets / _split_env_secrets
+# ---------------------------------------------------------------------------
+
+
+class TestSplitSecrets:
+    def test_splits_secret_keys(self):
+        data = {"host": "localhost", "password": "secret123", "port": 5432}
+        public, secrets = _split_secrets(data)
+        assert public["host"] == "localhost"
+        assert public["port"] == 5432
+        assert public["password"] == REDACTED
+        assert secrets["password"] == "secret123"
+
+    def test_nested_split(self):
+        data = {"database": {"host": "localhost", "password": "secret"}, "debug": True}
+        public, secrets = _split_secrets(data)
+        assert public["database"]["host"] == "localhost"
+        assert public["database"]["password"] == REDACTED
+        assert secrets["database"]["password"] == "secret"
+        assert public["debug"] is True
+
+    def test_no_secrets(self):
+        data = {"host": "localhost", "port": 5432}
+        public, secrets = _split_secrets(data)
+        assert public == data
+        assert secrets == {}
+
+    def test_lists_stay_in_public(self):
+        data = {"ports": [80, 443], "token": "abc123"}
+        public, secrets = _split_secrets(data)
+        assert public["ports"] == [80, 443]
+        assert "token" in secrets
+
+
+class TestSplitEnvSecrets:
+    def test_splits_secret_lines(self):
+        content = "HOST=localhost\nSECRET_KEY=abc123\nPORT=3000\n"
+        pub, sec = _split_env_secrets(content)
+        assert "SECRET_KEY=REDACTED" in pub
+        assert "HOST=localhost" in pub
+        assert "SECRET_KEY=abc123" in sec
+
+    def test_preserves_comments(self):
+        content = "# this is a comment\nSECRET_KEY=abc\n"
+        pub, sec = _split_env_secrets(content)
+        assert "# this is a comment" in pub
+
+    def test_no_secrets_returns_empty(self):
+        content = "HOST=localhost\nPORT=3000\n"
+        pub, sec = _split_env_secrets(content)
+        assert sec == ""
+        assert "HOST=localhost" in pub
+
+
+# ---------------------------------------------------------------------------
+# _count_leaves
+# ---------------------------------------------------------------------------
+
+
+class TestCountLeaves:
+    def test_all_secrets(self):
+        data = {"password": "secret", "token": "abc"}
+        total, secret = _count_leaves(data)
+        assert total == 2
+        assert secret == 2
+
+    def test_mixed(self):
+        data = {"host": "localhost", "password": "secret"}
+        total, secret = _count_leaves(data)
+        assert total == 2
+        assert secret == 1
+
+    def test_nested(self):
+        data = {"db": {"host": "localhost", "password": "secret"}}
+        total, secret = _count_leaves(data)
+        assert total == 2
+        assert secret == 1
+
+    def test_lists_count_as_one(self):
+        data = {"ports": [80, 443], "host": "localhost"}
+        total, secret = _count_leaves(data)
+        assert total == 2
+
+
+# ---------------------------------------------------------------------------
+# _dict_diff
+# ---------------------------------------------------------------------------
+
+
+class TestDictDiff:
+    def test_changed_value(self):
+        base = {"a": 1, "b": 2}
+        mod = {"a": 1, "b": 3}
+        assert _dict_diff(base, mod) == {"b": 3}
+
+    def test_added_key(self):
+        base = {"a": 1}
+        mod = {"a": 1, "b": 2}
+        assert _dict_diff(base, mod) == {"b": 2}
+
+    def test_nested_diff(self):
+        base = {"db": {"host": "prod", "port": 5432}}
+        mod = {"db": {"host": "localhost", "port": 5432}}
+        assert _dict_diff(base, mod) == {"db": {"host": "localhost"}}
+
+    def test_no_diff(self):
+        data = {"a": 1, "b": 2}
+        assert _dict_diff(data, data) == {}
+
+    def test_list_replaced_entirely(self):
+        base = {"ports": [80, 443]}
+        mod = {"ports": [80, 8080]}
+        assert _dict_diff(base, mod) == {"ports": [80, 8080]}
+
+    def test_unchanged_list_omitted(self):
+        base = {"ports": [80, 443], "host": "a"}
+        mod = {"ports": [80, 443], "host": "b"}
+        assert _dict_diff(base, mod) == {"host": "b"}
+
+
+# ---------------------------------------------------------------------------
+# save_file — secret auto-split
+# ---------------------------------------------------------------------------
+
+
+class TestSaveFileAutoSplit:
+    def test_yaml_secrets_split_to_companion(self, config_dir, tmp_path):
+        """YAML file with secrets produces a .secrets.yaml companion."""
+        src = tmp_path / "app.yaml"
+        src.write_text("host: localhost\npassword: secret123\nport: 5432\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", None, "app.yaml", config_dir, source=src)
+        public = config_dir / "dev" / "app.yaml"
+        companion = config_dir / "dev" / "app.secrets.yaml"
+        assert public.exists()
+        assert companion.exists()
+        assert REDACTED in public.read_text()
+        assert "secret123" in companion.read_text()
+
+    def test_no_secrets_no_companion(self, config_dir, tmp_path):
+        """YAML file without secrets has no companion file."""
+        src = tmp_path / "app.yaml"
+        src.write_text("host: localhost\nport: 5432\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", None, "app.yaml", config_dir, source=src)
+        assert (config_dir / "dev" / "app.yaml").exists()
+        assert not (config_dir / "dev" / "app.secrets.yaml").exists()
+
+    def test_all_secrets_encrypts_whole_file(self, config_dir, tmp_path):
+        """When 100% of leaves are secrets, whole file is encrypted."""
+        src = tmp_path / "creds.yaml"
+        src.write_text("password: secret\napi_token: tok123\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt) as mock:
+            save_file("dev", None, "creds.yaml", config_dir, source=src)
+        # Should encrypt the whole file, not create a companion
+        assert (config_dir / "dev" / "creds.yaml").exists()
+        assert not (config_dir / "dev" / "creds.secrets.yaml").exists()
+        mock.assert_called_once()
+
+    def test_env_secrets_split(self, config_dir, tmp_path):
+        """Saving a .env file splits secrets into companion."""
+        src = tmp_path / "settings.env"
+        src.write_text("HOST=localhost\nSECRET_KEY=abc123\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", None, "settings.env", config_dir, source=src)
+        public = config_dir / "dev" / "settings.env"
+        companion = config_dir / "dev" / "settings.secrets.env"
+        assert public.exists()
+        assert companion.exists()
+        assert "REDACTED" in public.read_text()
+        assert "abc123" in companion.read_text()
+
+
+# ---------------------------------------------------------------------------
+# save_file — diff-save mode
+# ---------------------------------------------------------------------------
+
+
+class TestSaveFileDiffSave:
+    def test_diff_save_writes_only_changes(self, config_dir, tmp_path):
+        """Diff-save with -d and -l writes only changed keys to local."""
+        (config_dir / "dev").mkdir(parents=True)
+        (config_dir / "dev" / "app.yaml").write_text(
+            "database:\n  host: localhost\n  port: 5432\n  name: app\n"
+        )
+        src = tmp_path / "app.yaml"
+        src.write_text("database:\n  host: localhost\n  port: 5433\n  name: app\nnew_key: value\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", "alice", "app.yaml", config_dir, source=src)
+        local = config_dir / "local" / "alice" / "app.yaml"
+        assert local.exists()
+        import yaml
+        data = yaml.safe_load(local.read_text())
+        assert data == {"database": {"port": 5433}, "new_key": "value"}
+
+    def test_diff_save_no_changes_warns(self, config_dir, tmp_path, capsys):
+        """Diff-save with no changes prints info and writes nothing."""
+        (config_dir / "dev").mkdir(parents=True)
+        (config_dir / "dev" / "app.yaml").write_text("key: value\n")
+        src = tmp_path / "app.yaml"
+        src.write_text("key: value\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", "alice", "app.yaml", config_dir, source=src)
+        assert not (config_dir / "local" / "alice" / "app.yaml").exists()
+
+    def test_diff_save_missing_deploy_exits(self, config_dir, tmp_path):
+        """Diff-save without existing deploy file exits with error."""
         src = tmp_path / "app.yaml"
         src.write_text("key: value\n")
         with pytest.raises(SystemExit):
             save_file("dev", "alice", "app.yaml", config_dir, source=src)
+
+    def test_diff_save_rejects_non_structured(self, config_dir, tmp_path):
+        """Diff-save with non-structured file type exits."""
+        (config_dir / "dev").mkdir(parents=True)
+        (config_dir / "dev" / "data.txt").write_text("hello")
+        src = tmp_path / "data.txt"
+        src.write_text("world")
+        with pytest.raises(SystemExit):
+            save_file("dev", "alice", "data.txt", config_dir, source=src)
 
 
 # ---------------------------------------------------------------------------

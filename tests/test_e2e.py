@@ -220,32 +220,148 @@ class TestRoundTrip:
 
 
 class TestFileMode:
-    def test_save_and_load_yaml(self, complete, tmp_path):
-        """Save a YAML file to a deployment and load it back."""
-        src = tmp_path / "app.yaml"
-        src.write_text("database:\n  host: localhost\n")
-        save_file("dev", None, "app.yaml", complete, source=src)
-        assert (complete / "dev" / "app.yaml").exists()
+    """Tests using YAML and JSON fixture files in complete.source/."""
 
-        out = tmp_path / "loaded.yaml"
+    def test_load_deployment_yaml(self, complete, tmp_path):
+        """Load a YAML file from a deployment directory."""
+        out = tmp_path / "app.yaml"
         load_file("dev", None, "app.yaml", complete, out, to_stdout=False)
-        assert out.read_text() == "database:\n  host: localhost\n"
+        content = out.read_text()
+        assert "host: localhost" in content
+        assert "name: app_dev" in content
 
-    def test_save_and_load_local_json(self, complete, tmp_path):
-        """Save a JSON file to a local dir and load it back."""
-        src = tmp_path / "settings.json"
-        src.write_text('{"editor":"vim"}')
-        save_file(None, "alice", "settings.json", complete, source=src)
+    def test_load_prod_yaml_differs_from_dev(self, complete, tmp_path):
+        """Different deployments serve different versions of the same file."""
+        dev_out = tmp_path / "dev.yaml"
+        prod_out = tmp_path / "prod.yaml"
+        load_file("dev", None, "app.yaml", complete, dev_out, to_stdout=False)
+        load_file("prod", None, "app.yaml", complete, prod_out, to_stdout=False)
+        assert "app_dev" in dev_out.read_text()
+        assert "app_prod" in prod_out.read_text()
 
-        out = tmp_path / "loaded.json"
-        load_file(None, "alice", "settings.json", complete, out, to_stdout=False)
-        assert out.read_text() == '{"editor":"vim"}'
+    def test_load_local_json(self, complete, tmp_path):
+        """Load a JSON file from a local/developer directory."""
+        out = tmp_path / "editor.json"
+        load_file(None, "alice", "editor.json", complete, out, to_stdout=False)
+        content = out.read_text()
+        assert '"tabSize": 2' in content
+        assert '"theme": "monokai"' in content
 
-    def test_load_file_stdout(self, complete, tmp_path, capsys):
-        """Load a file to stdout."""
-        (complete / "dev" / "app.yaml").write_text("key: value\n")
+    def test_load_yaml_stdout(self, complete, capsys):
+        """Load a YAML fixture to stdout."""
         load_file("dev", None, "app.yaml", complete, None, to_stdout=True)
-        assert "key: value" in capsys.readouterr().out
+        captured = capsys.readouterr().out
+        assert "database:" in captured
+        assert "host: localhost" in captured
+
+    def test_load_json_stdout(self, complete, capsys):
+        """Load a JSON fixture to stdout."""
+        load_file(None, "alice", "editor.json", complete, None, to_stdout=True)
+        captured = capsys.readouterr().out
+        assert '"formatOnSave": true' in captured
+
+    def test_save_yaml_round_trip(self, complete, tmp_path):
+        """Load a YAML file, modify it, save it back, and verify."""
+        out = tmp_path / "app.yaml"
+        load_file("dev", None, "app.yaml", complete, out, to_stdout=False)
+
+        # Modify and save back
+        content = out.read_text().replace("port: 5432", "port: 5433")
+        out.write_text(content)
+        save_file("dev", None, "app.yaml", complete, source=out)
+
+        # Verify
+        stored = (complete / "dev" / "app.yaml").read_text()
+        assert "port: 5433" in stored
+        assert "port: 5432" not in stored
+
+    def test_save_json_to_new_local(self, complete, tmp_path):
+        """Save a JSON file into a new local developer directory."""
+        src = tmp_path / "editor.json"
+        src.write_text('{"tabSize": 4, "theme": "solarized"}\n')
+        save_file(None, "charlie", "editor.json", complete, source=src)
+
+        stored = complete / "local" / "charlie" / "editor.json"
+        assert stored.exists()
+        assert '"tabSize": 4' in stored.read_text()
+
+    def test_save_yaml_to_different_deployment(self, complete, tmp_path):
+        """Load YAML from dev, save to staging."""
+        out = tmp_path / "app.yaml"
+        load_file("dev", None, "app.yaml", complete, out, to_stdout=False)
+        save_file("staging", None, "app.yaml", complete, source=out)
+
+        staged = complete / "staging" / "app.yaml"
+        assert staged.exists()
+        assert "name: app_dev" in staged.read_text()
+
+    def test_file_not_found_in_deployment(self, complete, tmp_path):
+        """Loading a nonexistent file from a deployment exits."""
+        with pytest.raises(SystemExit):
+            load_file("dev", None, "nope.txt", complete, tmp_path / "out", to_stdout=False)
+
+    def test_file_not_found_in_local(self, complete, tmp_path):
+        """Loading a nonexistent file from a local dir exits."""
+        with pytest.raises(SystemExit):
+            load_file(None, "alice", "nope.txt", complete, tmp_path / "out", to_stdout=False)
+
+    def test_save_diff_mode_with_both_flags(self, complete, tmp_path):
+        """Saving with both -d and -l does diff-save for YAML."""
+        src = tmp_path / "app.yaml"
+        # Modify a value from the dev fixture
+        src.write_text("database:\n  host: myhost\n  port: 5432\n  name: app_dev\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", "bob", "app.yaml", complete, source=src)
+        local = complete / "local" / "bob" / "app.yaml"
+        assert local.exists()
+        import yaml
+        data = yaml.safe_load(local.read_text())
+        # Only the changed key should appear
+        assert data == {"database": {"host": "myhost"}}
+
+
+# ---------------------------------------------------------------------------
+# File merge tests — using fixture files
+# ---------------------------------------------------------------------------
+
+
+class TestFileMerge:
+    """Tests for YAML/JSON merging with both -d and -l (using fixtures)."""
+
+    def test_yaml_merge_from_fixtures(self, complete, tmp_path):
+        """dev/app.yaml merged with local/alice/app.yaml."""
+        import yaml
+        out = tmp_path / "app.yaml"
+        load_file("dev", "alice", "app.yaml", complete, out, to_stdout=False)
+        result = yaml.safe_load(out.read_text())
+        # From local/alice/app.yaml (override)
+        assert result["database"]["host"] == "localhost"
+        assert result["database"]["port"] == 5433
+        assert result["database"]["name"] == "alice_dev"
+        # From dev/app.yaml (base, preserved)
+        assert result["redis"]["host"] == "localhost"
+        assert result["redis"]["port"] == 6379
+        # From local/alice/app.yaml (new key)
+        assert result["editor"]["theme"] == "monokai"
+        # Overridden at leaf level
+        assert result["logging"]["level"] == "trace"
+
+    def test_yaml_merge_stdout(self, complete, capsys):
+        """Merged YAML can be printed to stdout."""
+        load_file("dev", "alice", "app.yaml", complete, None, to_stdout=True)
+        out = capsys.readouterr().out
+        assert "alice_dev" in out
+        assert "redis:" in out
+
+    def test_merge_missing_local_warns(self, complete, tmp_path, capsys):
+        """If local file doesn't exist, deployment file is used with a warning."""
+        out = tmp_path / "app.yaml"
+        load_file("dev", "bob", "app.yaml", complete, out, to_stdout=False)
+        import yaml
+        result = yaml.safe_load(out.read_text())
+        assert result["database"]["name"] == "app_dev"  # base only
+        captured = capsys.readouterr()
+        assert "not found" in captured.err
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,20 @@
+database:
+  host: db.dev.internal
+  port: 5432
+  name: app_dev
+  pool_size: 10
+
+redis:
+  host: redis.dev.internal
+  port: 6379
+  db: 0
+
+logging:
+  level: debug
+  format: json
+  output: stdout
+
+features:
+  dark_mode: false
+  beta_access: true
+  max_upload_mb: 50

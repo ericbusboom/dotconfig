@@ -1,0 +1,21 @@
+database:
+  host: localhost
+  port: 5433
+  name: app_dev
+  pool_size: 10
+
+redis:
+  host: redis.dev.internal
+  port: 6379
+  db: 0
+
+logging:
+  level: trace
+  format: json
+  output: stdout
+
+features:
+  dark_mode: false
+  beta_access: true
+  max_upload_mb: 50
+  experimental_ui: true

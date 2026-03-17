@@ -1,0 +1,20 @@
+database:
+  host: db.prod.internal
+  port: 5432
+  name: app_prod
+  pool_size: 50
+
+redis:
+  host: redis.prod.internal
+  port: 6379
+  db: 0
+
+logging:
+  level: warn
+  format: json
+  output: file
+
+features:
+  dark_mode: true
+  beta_access: false
+  max_upload_mb: 100

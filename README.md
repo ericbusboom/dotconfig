@@ -353,18 +353,19 @@ The source files in `config/` are committed.  Encrypted secrets files
 
 ## Adding a new deployment
 
-1. Create `config/{name}/` directory.
-2. Create `config/{name}/public.env` with the public variables for that deployment.
-3. Encrypt a secrets file with real values:
+1. Create the deployment directory and its public config:
    ```bash
    mkdir -p config/{name}
-   touch config/{name}/secrets.env
-   $EDITOR config/{name}/secrets.env     # fill in real values
-   SOPS_CONFIG=config/sops.yaml sops --encrypt --in-place config/{name}/secrets.env
+   $EDITOR config/{name}/public.env      # add public variables
    ```
-4. Load and verify:
+2. Load the new deployment to generate `.env`:
    ```bash
    dotconfig load -d {name}
+   ```
+3. Add any secrets to the secrets section in `.env`, then save back:
+   ```bash
+   $EDITOR .env                          # add values under the secrets section
+   dotconfig save                        # encrypts secrets via SOPS automatically
    ```
 
 ---

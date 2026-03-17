@@ -1,0 +1,10 @@
+database:
+  host: localhost
+  port: 5433
+
+logging:
+  level: trace
+
+features:
+  beta_access: true
+  experimental_ui: true

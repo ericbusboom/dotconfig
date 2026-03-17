@@ -2,3 +2,5 @@
 complete/
 missing-secrets/
 empty/
+diff-test/
+sops-integration/

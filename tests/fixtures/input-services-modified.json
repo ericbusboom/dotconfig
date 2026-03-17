@@ -1,0 +1,21 @@
+{
+  "api": {
+    "host": "localhost",
+    "port": 9090,
+    "timeout_ms": 5000,
+    "retries": 3
+  },
+  "cdn": {
+    "endpoint": "https://cdn.dev.example.com",
+    "cache_ttl": 600
+  },
+  "notifications": {
+    "enabled": true,
+    "provider": "sendgrid",
+    "from_email": "noreply@dev.example.com"
+  },
+  "debug": {
+    "profiling": true,
+    "sql_logging": true
+  }
+}

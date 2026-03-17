@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dotconfig"
-version = "0.20260317.1"
+version = "0.20260317.2"
 description = "Environment configuration cascade manager for .env files"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -12,6 +12,7 @@ authors = [{ name = "Eric Busboom" }]
 requires-python = ">=3.9"
 dependencies = [
     "click>=8.0",
+    "detect-secrets>=1.5.0",
 ]
 keywords = ["dotenv", "config", "environment", "sops", "secrets"]
 classifiers = [

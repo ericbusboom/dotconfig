@@ -28,7 +28,9 @@ import click
 from pathlib import Path
 
 from .agent import show_agent_instructions
+from .audit import run_audit
 from .config import show_config
+from .hooks import install_pre_commit_hook
 from .init import init_config
 from .keys import show_keys
 from .load import load_config, load_file
@@ -94,7 +96,7 @@ def init(config_dir: str) -> None:
     help="Local / developer name for personal overrides.",
 )
 @click.option(
-    "--config-dir",
+    "-c", "--config-dir",
     default="config",
     show_default=True,
     help="Root config directory.",
@@ -187,7 +189,7 @@ def load(
     help=".env file to read and save.",
 )
 @click.option(
-    "--config-dir",
+    "-c", "--config-dir",
     default="config",
     show_default=True,
     help="Root config directory.",
@@ -198,12 +200,19 @@ def load(
     default=None,
     help="Save a specific file (e.g. foobar.yaml) into the config directory.",
 )
+@click.option(
+    "-e", "--encrypt",
+    is_flag=True,
+    default=False,
+    help="Encrypt the file with SOPS (only with --file).",
+)
 def save(
     deploy: str,
     local: str,
     env_file: str,
     config_dir: str,
     filename: str,
+    encrypt: bool,
 ) -> None:
     """Save .env sections back to config/ source files, or store a file.
 
@@ -215,7 +224,8 @@ def save(
     deployment or user.
 
     With --file: copies the named file into the deployment or local
-    config directory.
+    config directory.  Add -e/--encrypt to encrypt the file with SOPS.
+    Encrypted files are automatically decrypted on load.
 
     Example:
 
@@ -223,9 +233,13 @@ def save(
         dotconfig save
         dotconfig save -d dev -l stan
         dotconfig save --file app.yaml -d dev
+        dotconfig save --file secrets.yaml -d dev --encrypt
         dotconfig save --file settings.json -l alice
     """
     cfg = Path(config_dir)
+
+    if encrypt and not filename:
+        raise click.UsageError("--encrypt can only be used with --file")
 
     if filename:
         save_file(
@@ -233,6 +247,7 @@ def save(
             local=local,
             filename=filename,
             config_dir=cfg,
+            encrypt=encrypt,
         )
     else:
         save_config(
@@ -260,6 +275,43 @@ def keys() -> None:
 
 
 @cli.command()
+@click.option(
+    "-c", "--config-dir",
+    default=None,
+    help="Root config directory.  [default: auto-discovered or 'config']",
+)
+def audit(config_dir: str) -> None:
+    """Scan config/ for unencrypted secrets at rest.
+
+    Walks the config directory looking for files that contain values
+    whose key names suggest they are secrets but are stored in plaintext
+    rather than SOPS-encrypted.
+
+    Exits with code 0 if clean, code 1 if findings exist (useful for
+    CI and git hooks).
+
+    Example:
+
+    \b
+        dotconfig audit
+        dotconfig audit -c /path/to/config
+    """
+    import sys
+    from .discover import find_config_dir
+
+    if config_dir:
+        cfg = Path(config_dir)
+    else:
+        cfg = find_config_dir()
+        if cfg is None:
+            cfg = Path("config")
+
+    clean = run_audit(cfg)
+    if not clean:
+        sys.exit(1)
+
+
+@cli.command()
 def config() -> None:
     """Show dotconfig configuration and discovered paths.
 
@@ -274,6 +326,24 @@ def config() -> None:
         DOTCONFIG_NAME=.config dotconfig config
     """
     show_config()
+
+
+@cli.command("install-hooks")
+def install_hooks() -> None:
+    """Install a git pre-commit hook that runs dotconfig audit.
+
+    The hook blocks commits when unencrypted secrets are detected in
+    the config/ directory.  Safe to run multiple times — it will not
+    duplicate the hook if already installed.
+
+    Example:
+
+    \b
+        dotconfig install-hooks
+    """
+    import sys
+    if not install_pre_commit_hook():
+        sys.exit(1)
 
 
 @cli.command()

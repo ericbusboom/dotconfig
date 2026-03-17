@@ -4,15 +4,207 @@ or store a specific file into a deployment.
 
 Reads the marked sections in .env and writes each section back to its
 corresponding source file in config/, re-encrypting secrets with SOPS.
+
+Structured files (YAML, JSON) are automatically scanned for secrets.
+Secret values are replaced with REDACTED in the public file and written
+to a SOPS-encrypted companion file (e.g. app.secrets.yaml).
 """
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from .output import error, heading, ok, warn
+import yaml
+
+from .audit import _key_looks_secret
+from .output import error, heading, info, ok, warn
+
+
+# ---------------------------------------------------------------------------
+# Secret detection & splitting helpers
+# ---------------------------------------------------------------------------
+
+REDACTED = "REDACTED"
+
+_YAML_SUFFIXES = {".yaml", ".yml"}
+_JSON_SUFFIXES = {".json"}
+_ENV_SUFFIXES = {".env"}
+_STRUCTURED_SUFFIXES = _YAML_SUFFIXES | _JSON_SUFFIXES
+
+
+_DETECT_SECRETS_SETTINGS = {
+    "plugins_used": [
+        {"name": "AWSKeyDetector"},
+        {"name": "ArtifactoryDetector"},
+        {"name": "AzureStorageKeyDetector"},
+        {"name": "BasicAuthDetector"},
+        {"name": "CloudantDetector"},
+        {"name": "DiscordBotTokenDetector"},
+        {"name": "GitHubTokenDetector"},
+        {"name": "GitLabTokenDetector"},
+        {"name": "IbmCloudIamDetector"},
+        {"name": "IbmCosHmacDetector"},
+        {"name": "JwtTokenDetector"},
+        {"name": "MailchimpDetector"},
+        {"name": "NpmDetector"},
+        {"name": "OpenAIDetector"},
+        {"name": "PrivateKeyDetector"},
+        {"name": "PypiTokenDetector"},
+        {"name": "SendGridDetector"},
+        {"name": "SlackDetector"},
+        {"name": "SoftlayerDetector"},
+        {"name": "SquareOAuthDetector"},
+        {"name": "StripeDetector"},
+        {"name": "TelegramBotTokenDetector"},
+        {"name": "TwilioKeyDetector"},
+    ]
+}
+
+
+def _is_secret_value(value: str) -> bool:
+    """Return True if *value* matches known secret patterns via detect-secrets.
+
+    Uses only pattern-based detectors (not entropy-based) to avoid false
+    positives on normal config values like ``localhost`` or ``true``.
+    """
+    try:
+        from detect_secrets.core.scan import scan_line
+        from detect_secrets.settings import transient_settings
+
+        with transient_settings(_DETECT_SECRETS_SETTINGS):
+            return any(True for _ in scan_line(str(value)))
+    except ImportError:
+        return False
+
+
+def _secrets_companion(filename: str) -> str:
+    """Return the secrets companion filename.
+
+    ``app.yaml`` → ``app.secrets.yaml``,
+    ``config.json`` → ``config.secrets.json``.
+    """
+    p = Path(filename)
+    return f"{p.stem}.secrets{p.suffix}"
+
+
+def _is_leaf_secret(key: str, value: Any) -> bool:
+    """Return True if a leaf key/value pair looks like a secret."""
+    if isinstance(value, (dict, list)):
+        return False
+    return bool(_key_looks_secret(key)) or _is_secret_value(str(value))
+
+
+def _count_leaves(data: dict) -> Tuple[int, int]:
+    """Return ``(total_leaves, secret_leaves)`` counts."""
+    total, secret = 0, 0
+    for key, value in data.items():
+        if isinstance(value, dict):
+            t, s = _count_leaves(value)
+            total += t
+            secret += s
+        else:
+            total += 1
+            if _is_leaf_secret(key, value):
+                secret += 1
+    return total, secret
+
+
+def _split_secrets(data: dict) -> Tuple[dict, dict]:
+    """Split *data* into ``(public, secrets)``.
+
+    Secret leaf values are replaced with :data:`REDACTED` in the public
+    dict.  The secrets dict preserves the nesting structure so it can be
+    deep-merged back on load.
+    """
+    public: dict = {}
+    secrets: dict = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            pub_child, sec_child = _split_secrets(value)
+            if pub_child:
+                public[key] = pub_child
+            if sec_child:
+                secrets[key] = sec_child
+        elif _is_leaf_secret(key, value):
+            public[key] = REDACTED
+            secrets[key] = value
+        else:
+            public[key] = value
+    return public, secrets
+
+
+def _split_env_secrets(content: str) -> Tuple[str, str]:
+    """Split ``.env`` content into ``(public_with_redacted, secrets_only)``.
+
+    Comments and blank lines are kept in the public output.  Secret lines
+    have their value replaced with ``REDACTED`` in the public output and
+    appear with their real value in the secrets output.
+    """
+    public_lines: List[str] = []
+    secret_lines: List[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            public_lines.append(line)
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if _is_leaf_secret(key, value):
+            public_lines.append(f"{key}={REDACTED}")
+            secret_lines.append(stripped)
+        else:
+            public_lines.append(line)
+    pub = "\n".join(public_lines) + "\n"
+    sec = "\n".join(secret_lines) + "\n" if secret_lines else ""
+    return pub, sec
+
+
+def _parse_structured(text: str, suffix: str) -> Dict[str, Any]:
+    """Parse *text* as YAML or JSON based on *suffix*."""
+    if suffix in _YAML_SUFFIXES:
+        return yaml.safe_load(text) or {}
+    if suffix in _JSON_SUFFIXES:
+        return json.loads(text)
+    error(f"unsupported structured format: '{suffix}'")
+    sys.exit(1)
+
+
+def _serialize_structured(data: Dict[str, Any], suffix: str) -> str:
+    """Serialize *data* to YAML or JSON."""
+    if suffix in _YAML_SUFFIXES:
+        return yaml.dump(data, default_flow_style=False, sort_keys=False)
+    if suffix in _JSON_SUFFIXES:
+        return json.dumps(data, indent=2) + "\n"
+    error(f"unsupported structured format: '{suffix}'")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Dict diff helper
+# ---------------------------------------------------------------------------
+
+
+def _dict_diff(base: dict, modified: dict) -> dict:
+    """Return only keys in *modified* that differ from *base*.
+
+    Nested dicts are compared recursively.  Lists and scalars use
+    equality — a changed list is included in its entirety.
+    """
+    diff: dict = {}
+    for key, value in modified.items():
+        if key not in base:
+            diff[key] = value
+        elif isinstance(value, dict) and isinstance(base[key], dict):
+            sub = _dict_diff(base[key], value)
+            if sub:
+                diff[key] = sub
+        elif value != base[key]:
+            diff[key] = value
+    return diff
 
 
 def _rewrite_deployment(body: str, target_deployment: str) -> str:
@@ -131,31 +323,113 @@ def parse_env_file(
     return deployment, local_name, sections
 
 
+def _write_with_split(
+    data_content: str,
+    dest: Path,
+    filename: str,
+    config_dir: Path,
+    encrypt: bool,
+) -> None:
+    """Write a file, auto-splitting secrets for structured and .env files.
+
+    For structured files (YAML/JSON): if 100% of leaves are secrets the
+    whole file is encrypted.  Otherwise secret values are replaced with
+    ``REDACTED`` in the public file and written to a SOPS-encrypted
+    companion.
+
+    For .env files: same approach — secret lines get REDACTED values in
+    the public file and real values in the companion.
+
+    If *encrypt* is True the main file is also SOPS-encrypted (overrides
+    the split — the whole thing is encrypted).
+    """
+    sops_config = config_dir / "sops.yaml"
+    suffix = Path(filename).suffix.lower()
+    companion_name = _secrets_companion(filename)
+    companion_path = dest.parent / companion_name
+
+    # --encrypt forces whole-file encryption, no split
+    if encrypt:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if _encrypt_sops(data_content, dest, sops_config):
+            ok(f"→ {dest} 🔒")
+        else:
+            error(f"encryption failed for {dest}")
+            sys.exit(1)
+        return
+
+    if suffix in _STRUCTURED_SUFFIXES:
+        data = _parse_structured(data_content, suffix)
+        total, secret_count = _count_leaves(data)
+
+        if total > 0 and secret_count == total:
+            # 100% secrets → encrypt whole file
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if _encrypt_sops(data_content, dest, sops_config):
+                ok(f"→ {dest} 🔒 (all values are secrets)")
+            else:
+                error(f"encryption failed for {dest}")
+                sys.exit(1)
+            return
+
+        if secret_count > 0:
+            public_data, secrets_data = _split_secrets(data)
+            # Write public file with REDACTED placeholders
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(_serialize_structured(public_data, suffix))
+            ok(f"→ {dest}")
+            # Write encrypted secrets companion
+            sec_content = _serialize_structured(secrets_data, suffix)
+            if _encrypt_sops(sec_content, companion_path, sops_config):
+                ok(f"→ {companion_path} 🔒")
+            else:
+                warn(f"could not encrypt {companion_path}")
+            return
+
+    elif suffix in _ENV_SUFFIXES:
+        pub_content, sec_content = _split_env_secrets(data_content)
+        if sec_content:
+            # Write public file with REDACTED placeholders
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(pub_content)
+            ok(f"→ {dest}")
+            # Write encrypted secrets companion
+            if _encrypt_sops(sec_content, companion_path, sops_config):
+                ok(f"→ {companion_path} 🔒")
+            else:
+                warn(f"could not encrypt {companion_path}")
+            return
+
+    # No secrets found (or unrecognised format) — write as-is
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(data_content)
+    ok(f"→ {dest}")
+
+
 def save_file(
     deployment: Optional[str],
     local: Optional[str],
     filename: str,
     config_dir: Path,
     source: Optional[Path] = None,
+    encrypt: bool = False,
 ) -> None:
     """Save a single file into a deployment or local directory.
 
-    Exactly one of *deployment* or *local* must be provided (not both).
+    Modes:
+      - Only *deployment*: save to ``config/{deployment}/{filename}``
+      - Only *local*: save to ``config/local/{local}/{filename}``
+      - Both *deployment* and *local* (diff-save): compare the source
+        against the existing deployment file and write only the
+        changed/added keys to ``config/local/{local}/{filename}``
 
-    Resolves the destination:
-      - With *deployment*: ``config/{deployment}/{filename}``
-      - With *local*: ``config/local/{local}/{filename}``
+    Structured files (YAML/JSON) and .env files are automatically scanned
+    for secrets.  Secret values are replaced with REDACTED in the public
+    file and stored in a SOPS-encrypted companion.
 
-    Reads from *source* (defaulting to ``./{filename}``).
+    When *encrypt* is True the entire file is SOPS-encrypted.
     """
-    if deployment and local:
-        error("--file requires either --deploy or --local, not both")
-        sys.exit(1)
-    if local:
-        dest = config_dir / "local" / local / filename
-    elif deployment:
-        dest = config_dir / deployment / filename
-    else:
+    if not deployment and not local:
         error("--deploy or --local is required with --file")
         sys.exit(1)
 
@@ -164,9 +438,43 @@ def save_file(
         error(f"source file not found: {src}")
         sys.exit(1)
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(src.read_text())
-    ok(f"{src} → {dest}")
+    content = src.read_text()
+    suffix = Path(filename).suffix.lower()
+
+    if deployment and local:
+        # Diff-save mode: compare against existing deploy file,
+        # write only changed/added keys to local dir.
+        if suffix not in _STRUCTURED_SUFFIXES:
+            error(f"diff-save requires a structured file (.yaml, .yml, .json), got '{suffix}'")
+            sys.exit(1)
+
+        from .load import _read_file_content
+        deploy_path = config_dir / deployment / filename
+        if not deploy_path.exists():
+            error(f"deployment file not found: {deploy_path} — save to deployment first")
+            sys.exit(1)
+
+        sops_config = config_dir / "sops.yaml"
+        deploy_text = _read_file_content(deploy_path, sops_config)
+        deploy_data = _parse_structured(deploy_text, suffix)
+        source_data = _parse_structured(content, suffix)
+
+        diff = _dict_diff(deploy_data, source_data)
+        if not diff:
+            info("no changes relative to deployment file — nothing to save")
+            return
+
+        dest = config_dir / "local" / local / filename
+        diff_content = _serialize_structured(diff, suffix)
+        _write_with_split(diff_content, dest, filename, config_dir, encrypt)
+    else:
+        # Single-target save
+        if local:
+            dest = config_dir / "local" / local / filename
+        else:
+            dest = config_dir / deployment / filename
+
+        _write_with_split(content, dest, filename, config_dir, encrypt)
 
 
 def save_config(
@@ -281,5 +589,9 @@ def save_config(
         heading("💾 Saved:")
         for label, path in saved:
             ok(f"{label} → {path}")
+
+        # Auto-audit for unencrypted secrets after a successful save.
+        from .audit import run_audit
+        run_audit(config_dir)
     else:
         warn("Nothing saved.")

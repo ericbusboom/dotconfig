@@ -1,0 +1,10 @@
+database:
+  host: localhost
+  port: 5433
+  name: alice_dev
+
+logging:
+  level: trace
+
+editor:
+  theme: monokai
