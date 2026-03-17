@@ -286,11 +286,15 @@ an environment configuration cascade manager for `.env` files.
 dotconfig init
 
 # Load config into .env (assembles layers into a single file)
-dotconfig load dev yourname       # dev environment + local overrides
-dotconfig load prod               # prod only, no local overrides
+dotconfig load -d dev -l yourname   # dev deployment + local overrides
+dotconfig load -d prod              # prod only, no local overrides
 
 # Save .env edits back to source files
 dotconfig save
+
+# Load/save a specific file
+dotconfig load -d dev --file app.yaml --stdout
+dotconfig save -d dev --file app.yaml
 ```
 
 ## Directory layout
@@ -315,8 +319,8 @@ config/
 `dotconfig load` assembles a single `.env` from four layers in
 last-write-wins order:
 
-1. `config/{env}/public.env` — shared public config
-2. `config/{env}/secrets.env` — shared SOPS-encrypted secrets
+1. `config/{deploy}/public.env` — shared public config
+2. `config/{deploy}/secrets.env` — shared SOPS-encrypted secrets
 3. `config/local/{user}/public.env` — personal public overrides
 4. `config/local/{user}/secrets.env` — personal encrypted secrets (optional)
 
@@ -330,7 +334,7 @@ so `dotconfig save` can round-trip edits back to the correct source files.
   this `config/` directory.
 - **Secrets files are SOPS-encrypted** — use `dotconfig save` (not manual
   sops commands) to re-encrypt after editing `.env`.
-- Environment names are open-ended: dev, prod, test, staging, ci, etc.
+- Deployment names are open-ended: dev, prod, test, staging, ci, etc.
 """
 
 

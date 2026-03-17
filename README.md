@@ -26,7 +26,7 @@ overrides — and can round-trip it back.  It is designed for teams where:
   - [`dotconfig save`](#dotconfig-save)
 - [SOPS integration](#sops-integration)
 - [Workflow](#workflow)
-- [Adding a new environment](#adding-a-new-environment)
+- [Adding a new deployment](#adding-a-new-deployment)
 - [Adding a new developer](#adding-a-new-developer)
 - [Design decisions](#design-decisions)
 
@@ -77,8 +77,8 @@ your-project/
 **Load** config into `.env`:
 
 ```bash
-dotconfig load dev yourname     # dev environment + your local overrides
-dotconfig load prod             # prod environment, no local overrides
+dotconfig load -d dev -l yourname   # dev deployment + your local overrides
+dotconfig load -d prod              # prod deployment, no local overrides
 ```
 
 **Edit** `.env` directly if you need to tweak a value, then **save** it
@@ -86,6 +86,13 @@ back to the source files:
 
 ```bash
 dotconfig save
+```
+
+**Load/save specific files** (YAML, JSON, etc.):
+
+```bash
+dotconfig load -d dev --file app.yaml --stdout   # print to stdout
+dotconfig save -d dev --file app.yaml            # store into config/dev/
 ```
 
 ---
@@ -96,10 +103,10 @@ dotconfig save
 config/
   sops.yaml                      # SOPS encryption rules (non-dotfile, in config/)
   dev/
-    public.env                   # Public common config for "dev"
+    public.env                   # Public config for the "dev" deployment
     secrets.env                  # SOPS-encrypted secrets for "dev"
   prod/
-    public.env                   # Public common config for "prod"
+    public.env                   # Public config for the "prod" deployment
     secrets.env                  # SOPS-encrypted secrets for "prod"
   local/
     alice/
@@ -109,7 +116,7 @@ config/
       public.env                 # Another developer's overrides
 ```
 
-Environment names are open-ended — use any string that works as a directory
+Deployment names are open-ended — use any string that works as a directory
 name (`dev`, `prod`, `test`, `staging`, `ci`, …).
 
 ---
@@ -120,7 +127,7 @@ name (`dev`, `prod`, `test`, `staging`, `ci`, …).
 back to the source files:
 
 ```bash
-# CONFIG_COMMON=dev
+# CONFIG_DEPLOY=dev
 # CONFIG_LOCAL=ericbusboom
 
 #@dotconfig: public (dev)
@@ -148,11 +155,11 @@ SOPS_AGE_KEY_FILE=/Users/ericbusboom/.config/sops/age/keys.txt
 ```
 
 **Last-write-wins**: when the file is shell-sourced (`set -a; . .env; set +a`),
-later sections override earlier ones.  Local overrides common; secrets
+later sections override earlier ones.  Local overrides deployment; secrets
 override public.
 
 The `#@dotconfig:` markers are unique to dotconfig — do not use this prefix
-in your own comments.  The two metadata comments (`CONFIG_COMMON`,
+in your own comments.  The two metadata comments (`CONFIG_DEPLOY`,
 `CONFIG_LOCAL`) tell `dotconfig save` where to write each section back.
 
 ---
@@ -162,41 +169,48 @@ in your own comments.  The two metadata comments (`CONFIG_COMMON`,
 ### `dotconfig load`
 
 ```
-Usage: dotconfig load [OPTIONS] COMMON_NAME [LOCAL_NAME]
+Usage: dotconfig load [OPTIONS]
 
-  Assemble config files into .env.
-
-  COMMON_NAME selects the environment (e.g. dev, prod, test).
-  LOCAL_NAME optionally adds a developer-specific override layer.
+  Assemble config files into .env, or load a specific file.
 
 Options:
-  --config-dir TEXT  Root config directory.  [default: config]
-  --output TEXT      Destination .env file.  [default: .env]
-  --help             Show this message and exit.
+  -d, --deploy TEXT     Deployment / environment name (e.g. dev, prod).
+  -l, --local TEXT      Local / developer name for personal overrides.
+  -f, --file TEXT       Load a specific file instead of assembling .env.
+  -o, --output TEXT     Destination file.  [default: .env or the --file name]
+  --stdout              Print to stdout instead of writing to a file.
+  --config-dir TEXT     Root config directory.  [default: config]
+  --help                Show this message and exit.
 ```
 
 **Examples:**
 
 ```bash
-# Load dev environment with Eric's local overrides
-dotconfig load dev ericbusboom
+# Load dev deployment with Eric's local overrides
+dotconfig load -d dev -l ericbusboom
 
-# Load prod environment, no local overrides
-dotconfig load prod
-
-# Load a custom environment name pointing to a non-default config directory
-dotconfig load staging --config-dir /path/to/config
+# Load prod deployment, no local overrides
+dotconfig load -d prod
 
 # Write to a file other than .env
-dotconfig load dev --output .env.dev
+dotconfig load -d dev -o .env.dev
+
+# Load a specific YAML file from the dev deployment
+dotconfig load -d dev --file app.yaml
+
+# Print a file to stdout (useful for agents / piping)
+dotconfig load -d dev --file app.yaml --stdout
 ```
 
-**What it reads:**
+When using `--file`, specify either `-d` or `-l` (not both) — the file
+lives in one location only.
+
+**What it reads (without `--file`):**
 
 | Source file | Section in `.env` |
 |---|---|
-| `config/{common}/public.env` | `#@dotconfig: public ({common})` |
-| `config/{common}/secrets.env` (SOPS-encrypted) | `#@dotconfig: secrets ({common})` |
+| `config/{deploy}/public.env` | `#@dotconfig: public ({deploy})` |
+| `config/{deploy}/secrets.env` (SOPS-encrypted) | `#@dotconfig: secrets ({deploy})` |
 | `config/local/{local}/public.env` | `#@dotconfig: public-local ({local})` |
 | `config/local/{local}/secrets.env` (SOPS-encrypted) | `#@dotconfig: secrets-local ({local})` |
 
@@ -214,16 +228,15 @@ own local overrides.
 ```
 Usage: dotconfig save [OPTIONS]
 
-  Save .env sections back to config/ source files.
-
-  Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata, then writes
-  each section back to its corresponding source file, re-encrypting secrets
-  with SOPS.
+  Save .env sections back to config/ source files, or store a file.
 
 Options:
-  --env-file TEXT    .env file to read and save.  [default: .env]
-  --config-dir TEXT  Root config directory.  [default: config]
-  --help             Show this message and exit.
+  -d, --deploy TEXT     Target deployment (overrides .env metadata).
+  -l, --local TEXT      Target local / developer name (overrides .env metadata).
+  -f, --file TEXT       Save a specific file into the config directory.
+  --env-file TEXT       .env file to read and save.  [default: .env]
+  --config-dir TEXT     Root config directory.  [default: config]
+  --help                Show this message and exit.
 ```
 
 **Examples:**
@@ -232,21 +245,30 @@ Options:
 # Save all sections from .env back to config/
 dotconfig save
 
-# Save from a non-default file
-dotconfig save --env-file .env.staging
+# Save to a different deployment
+dotconfig save -d staging
+
+# Save a YAML file into the dev deployment
+dotconfig save -d dev --file app.yaml
+
+# Save a JSON file into a local config directory
+dotconfig save -l alice --file settings.json
 ```
 
-**What it writes:**
+When using `--file`, specify either `-d` or `-l` (not both) — the file
+lives in one location only.
+
+**What it writes (without `--file`):**
 
 | Section in `.env` | Destination file |
 |---|---|
-| `#@dotconfig: public ({common})` | `config/{common}/public.env` (plaintext) |
-| `#@dotconfig: secrets ({common})` | `config/{common}/secrets.env` (SOPS-encrypted) |
+| `#@dotconfig: public ({deploy})` | `config/{deploy}/public.env` (plaintext) |
+| `#@dotconfig: secrets ({deploy})` | `config/{deploy}/secrets.env` (SOPS-encrypted) |
 | `#@dotconfig: public-local ({local})` | `config/local/{local}/public.env` (plaintext) |
 | `#@dotconfig: secrets-local ({local})` | `config/local/{local}/secrets.env` (SOPS-encrypted, only if non-empty) |
 
 `dotconfig save` requires a dotconfig-managed `.env` (one that was produced
-by `dotconfig load`) because it relies on the `CONFIG_COMMON` metadata
+by `dotconfig load`) because it relies on the `CONFIG_DEPLOY` metadata
 comment to know where to write the files back.
 
 ---
@@ -301,14 +323,14 @@ cp -r config/local/ericbusboom config/local/yourname
 # Edit it with your values
 $EDITOR config/local/yourname/public.env
 # Load dev config
-dotconfig load dev yourname
+dotconfig load -d dev -l yourname
 ```
 
 ### Daily development
 
 ```bash
 # Reload if someone changed config files
-dotconfig load dev yourname
+dotconfig load -d dev -l yourname
 
 # Make an ad-hoc change in .env directly, then save it back
 $EDITOR .env
@@ -329,10 +351,10 @@ The source files in `config/` are committed.  Encrypted secrets files
 
 ---
 
-## Adding a new environment
+## Adding a new deployment
 
 1. Create `config/{name}/` directory.
-2. Create `config/{name}/public.env` with the public variables for that environment.
+2. Create `config/{name}/public.env` with the public variables for that deployment.
 3. Encrypt a secrets file with real values:
    ```bash
    mkdir -p config/{name}
@@ -342,7 +364,7 @@ The source files in `config/` are committed.  Encrypted secrets files
    ```
 4. Load and verify:
    ```bash
-   dotconfig load {name}
+   dotconfig load -d {name}
    ```
 
 ---
@@ -363,7 +385,7 @@ The source files in `config/` are committed.  Encrypted secrets files
    ```bash
    cp -r config/local/ericbusboom config/local/theirname
    $EDITOR config/local/theirname/public.env
-   dotconfig load dev theirname
+   dotconfig load -d dev -l theirname
    ```
 
 ---
@@ -374,9 +396,9 @@ The source files in `config/` are committed.  Encrypted secrets files
 |---|---|
 | **Single `.env` file** | Tools (dotenv, Docker, IDEs) read one file — no cascade-compatibility issues. |
 | **Marked sections** | Enable round-tripping between `.env` and `config/` source files without extra metadata files. |
-| **Open environment names** | Not limited to `dev`/`prod`; supports `test`, `ci`, `staging`, or any custom name. |
-| **Last-write-wins ordering** | Later sections override earlier when shell-sourced; local overrides common. |
+| **Open deployment names** | Not limited to `dev`/`prod`; supports `test`, `ci`, `staging`, or any custom name. |
+| **Last-write-wins ordering** | Later sections override earlier when shell-sourced; local overrides deployment. |
 | **SOPS optional at load time** | Developers without SOPS access can still load public config; secrets are skipped with a warning. |
 | **No shell variable expansion** | Values are literal strings — no `$VAR` interpolation. Use a local override to change a value for a specific machine. |
-| **Local secrets are optional** | `config/secrets/local/` exists but most developers won't need it. |
+| **Local secrets are optional** | `config/local/{user}/secrets.env` is supported but most developers won't need it. |
 

@@ -13,13 +13,13 @@ and can round-trip edits back.  The layers are:
 
 | Layer | Path | Purpose |
 |---|---|---|
-| Public common config | `config/{env}/public.env` | Shared, non-secret variables for an environment |
-| Encrypted common secrets | `config/{env}/secrets.env` | SOPS-encrypted secrets for an environment |
+| Public deployment config | `config/{deploy}/public.env` | Shared, non-secret variables for a deployment |
+| Encrypted deployment secrets | `config/{deploy}/secrets.env` | SOPS-encrypted secrets for a deployment |
 | Public local overrides | `config/local/{user}/public.env` | Per-developer machine-specific overrides |
 | Encrypted local secrets | `config/local/{user}/secrets.env` | Per-developer encrypted secrets (optional) |
 
 The resulting `.env` is ordered so that **later sections override earlier ones**
-when shell-sourced (last-write-wins): local overrides common, secrets override
+when shell-sourced (last-write-wins): local overrides deployment, secrets override
 public.
 
 ---
@@ -39,42 +39,52 @@ up a new project.
 ### `dotconfig load`
 
 ```
-dotconfig load <environment> [local_name] [--config-dir config] [--output .env]
+dotconfig load -d <deployment> [-l <local>] [--file <name>] [--output <path>] [--stdout]
 ```
 
-Assembles source files into `.env`.
+Assembles source files into `.env`, or retrieves a specific file.
 
-- `environment` — the environment directory name (`dev`, `prod`, `staging`, …)
-- `local_name` — optional developer name for local overrides
+- `-d/--deploy` — the deployment name (`dev`, `prod`, `staging`, …)
+- `-l/--local` — optional developer name for local overrides
+- `--file` — load a specific file (e.g. `app.yaml`) instead of assembling `.env`
+- `--stdout` — print to stdout instead of writing to a file
 - Missing files produce a warning but do not abort
 
 **Examples:**
 
 ```bash
-dotconfig load dev alice        # dev environment + Alice's local overrides
-dotconfig load prod             # prod only, no local overrides
+dotconfig load -d dev -l alice      # dev deployment + Alice's local overrides
+dotconfig load -d prod              # prod only, no local overrides
+dotconfig load -d dev --file app.yaml --stdout   # print a file to stdout
 ```
+
+When using `--file`, specify either `-d` or `-l` (not both) — the file
+lives in one location only.
 
 ### `dotconfig save`
 
 ```
-dotconfig save [common_name] [local_name] [--env-file .env] [--config-dir config]
+dotconfig save [-d <deployment>] [-l <local>] [--file <name>] [--env-file .env]
 ```
 
 Reads the `.env` file (which must have been produced by `dotconfig load`) and
 writes each marked section back to its source file, re-encrypting secrets via
-SOPS.
+SOPS.  Or stores a specific file into the config directory.
 
-- If `common_name` / `local_name` are given, the sections are written to those
-  targets instead of the originals (useful for cloning an environment).
-- The `.env` **must** contain `# CONFIG_COMMON=` metadata for save to work.
+- If `-d`/`-l` are given without `--file`, sections are written to those
+  targets instead of the originals (useful for cloning a deployment).
+- The `.env` **must** contain `# CONFIG_DEPLOY=` metadata for save to work.
 
 **Examples:**
 
 ```bash
-dotconfig save                  # save back to original source files
-dotconfig save dev stan         # redirect output to dev/stan config files
+dotconfig save                         # save back to original source files
+dotconfig save -d staging              # redirect output to staging
+dotconfig save -d dev --file app.yaml  # store app.yaml into config/dev/
+dotconfig save -l alice --file settings.json  # store into config/local/alice/
 ```
+
+When using `--file`, specify either `-d` or `-l` (not both).
 
 ### `dotconfig keys`
 
@@ -85,6 +95,15 @@ dotconfig keys
 Reports the status of your age encryption keys: where they are, the derived
 public key, and the environment variable exports you need.
 
+### `dotconfig config`
+
+```
+dotconfig config
+```
+
+Shows the installed version, config directory name, and where the config
+directory was found.
+
 ---
 
 ## Generated `.env` format
@@ -93,7 +112,7 @@ The `.env` file produced by `dotconfig load` contains metadata comments and
 marked sections:
 
 ```bash
-# CONFIG_COMMON=dev
+# CONFIG_DEPLOY=dev
 # CONFIG_LOCAL=alice
 
 #@dotconfig: public (dev)
@@ -111,7 +130,7 @@ DEV_DOCKER_CONTEXT=orbstack
 
 **Important for agents:**
 
-- `# CONFIG_COMMON=` and `# CONFIG_LOCAL=` are metadata — do not remove them.
+- `# CONFIG_DEPLOY=` and `# CONFIG_LOCAL=` are metadata — do not remove them.
 - Section markers (`#@dotconfig: public (dev)`, etc.) map sections back to source
   files — do not rename or reorder them.
 - The `#@dotconfig:` prefix is reserved for dotconfig — never use it in your
@@ -127,9 +146,10 @@ DEV_DOCKER_CONTEXT=orbstack
 ```
 config/
   sops.yaml                     # SOPS encryption rules
-  dev/                          # One directory per environment
+  dev/                          # One directory per deployment
     public.env
     secrets.env                 # SOPS-encrypted
+    app.yaml                    # Any other config files
   prod/
     public.env
     secrets.env
@@ -141,7 +161,7 @@ config/
       public.env
 ```
 
-Environment names are open-ended — any valid directory name works.
+Deployment names are open-ended — any valid directory name works.
 
 ---
 
@@ -165,23 +185,43 @@ Environment names are open-ended — any valid directory name works.
 ### Loading environment config
 
 ```bash
-# Figure out which environments exist
+# Figure out which deployments exist
 ls config/
 
 # Figure out which local overrides exist
 ls config/local/
 
-# Load an environment
-dotconfig load dev alice
+# Load a deployment
+dotconfig load -d dev -l alice
+```
+
+### Reading a file without writing to disk
+
+```bash
+# Print the assembled .env to stdout
+dotconfig load -d dev --stdout
+
+# Print a specific config file to stdout
+dotconfig load -d dev --file app.yaml --stdout
 ```
 
 ### Editing a variable
 
-1. Run `dotconfig load <env> [local]` to produce `.env`.
+1. Run `dotconfig load -d <deploy> [-l <local>]` to produce `.env`.
 2. Edit the value in `.env` under the correct section.
 3. Run `dotconfig save` to write changes back to source files.
 
-### Adding a new environment
+### Storing a config file
+
+```bash
+# Save a YAML file into the dev deployment
+dotconfig save -d dev --file app.yaml
+
+# Save a JSON file into a local directory
+dotconfig save -l alice --file settings.json
+```
+
+### Adding a new deployment
 
 ```bash
 mkdir -p config/newenv
@@ -201,7 +241,7 @@ dotconfig keys
 
 ```bash
 dotconfig init
-dotconfig load dev yourname
+dotconfig load -d dev -l yourname
 ```
 
 ---
@@ -214,7 +254,10 @@ dotconfig load dev yourname
 3. **Always load before saving** if you are unsure whether `.env` is current.
 4. **Do not commit `.env`** — it is a generated file and should be in
    `.gitignore`.
-5. **Public config is safe to read directly** from `config/{env}/public.env`
+5. **Public config is safe to read directly** from `config/{deploy}/public.env`
    if you only need to inspect values without modifying them.
 6. **Secrets files are SOPS-encrypted** — you cannot read them directly.  Use
    `dotconfig load` to decrypt them into `.env`.
+7. **Use `--stdout`** to read config into your context without writing files.
+8. **Use `--file`** with either `-d` or `-l` (not both) to load/save individual
+   files like YAML or JSON configs.

@@ -1,5 +1,6 @@
 """
-Load command: assemble config/ source files into a single .env file.
+Load command: assemble config/ source files into a single .env file,
+or retrieve a specific file from a deployment.
 
 The generated .env has marked sections that map back to source files
 in the config/ directory, enabling round-tripping via the save command.
@@ -9,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+
+import click
 
 from .output import error, ok, warn
 
@@ -44,38 +47,86 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
         return None
 
 
-def load_config(
-    common_name: str,
-    local_name: Optional[str],
+def load_file(
+    deployment: Optional[str],
+    local: Optional[str],
+    filename: str,
     config_dir: Path,
-    output: Path,
+    output: Optional[Path],
+    to_stdout: bool,
+) -> None:
+    """Load a single file from a deployment or local directory.
+
+    Exactly one of *deployment* or *local* must be provided (not both).
+
+    Resolves the file path:
+      - With *deployment*: ``config/{deployment}/{filename}``
+      - With *local*: ``config/local/{local}/{filename}``
+
+    Writes to *output* (defaulting to ``./{filename}``) or prints to
+    stdout when *to_stdout* is True.
+    """
+    if deployment and local:
+        error("--file requires either --deploy or --local, not both")
+        sys.exit(1)
+    if local:
+        source = config_dir / "local" / local / filename
+    elif deployment:
+        source = config_dir / deployment / filename
+    else:
+        error("--deploy or --local is required with --file")
+        sys.exit(1)
+
+    if not source.exists():
+        error(f"file not found: {source}")
+        sys.exit(1)
+
+    content = source.read_text()
+
+    if to_stdout:
+        click.echo(content, nl=False)
+    else:
+        dest = output if output else Path(filename)
+        dest.write_text(content)
+        ok(f"Written to {dest}")
+
+
+def load_config(
+    deployment: str,
+    local: Optional[str],
+    config_dir: Path,
+    output: Optional[Path],
+    to_stdout: bool = False,
 ) -> None:
     """Assemble config source files into a single .env file.
 
     Reads from:
-      - config/{common_name}/public.env            (public common config)
-      - config/{common_name}/secrets.env           (SOPS-encrypted secrets)
-      - config/local/{local_name}/public.env       (public local overrides, optional)
-      - config/local/{local_name}/secrets.env      (encrypted local secrets, optional)
+      - config/{deployment}/public.env            (public deployment config)
+      - config/{deployment}/secrets.env           (SOPS-encrypted secrets)
+      - config/local/{local}/public.env           (public local overrides, optional)
+      - config/local/{local}/secrets.env          (encrypted local secrets, optional)
 
     Writes a .env with marked sections:
-      # CONFIG_COMMON={common_name}
-      # CONFIG_LOCAL={local_name}   (if local_name is provided)
+      # CONFIG_DEPLOY={deployment}
+      # CONFIG_LOCAL={local}   (if local is provided)
 
-      #@dotconfig: public ({common_name})
+      #@dotconfig: public ({deployment})
       ...
-      #@dotconfig: secrets ({common_name})
+      #@dotconfig: secrets ({deployment})
       ...
-      #@dotconfig: public-local ({local_name})   (if local_name is provided)
+      #@dotconfig: public-local ({local})   (if local is provided)
       ...
-      #@dotconfig: secrets-local ({local_name})  (if local_name is provided)
+      #@dotconfig: secrets-local ({local})  (if local is provided)
       ...
 
     Later sections override earlier ones (last-write-wins when shell-sourced).
+
+    When *to_stdout* is True the assembled content is printed to stdout
+    instead of being written to a file.
     """
-    common_env = config_dir / common_name / "public.env"
-    if not common_env.exists():
-        error(f"common config file not found: {common_env}")
+    deploy_env = config_dir / deployment / "public.env"
+    if not deploy_env.exists():
+        error(f"deployment config file not found: {deploy_env}")
         sys.exit(1)
 
     parts = []
@@ -86,21 +137,21 @@ def load_config(
     sops_config = config_dir / "sops.yaml"
 
     # --- Metadata header ---
-    parts.append(f"# CONFIG_COMMON={common_name}")
-    if local_name:
-        parts.append(f"# CONFIG_LOCAL={local_name}")
+    parts.append(f"# CONFIG_DEPLOY={deployment}")
+    if local:
+        parts.append(f"# CONFIG_LOCAL={local}")
     parts.append("")
 
-    # --- Public (common) section ---
-    parts.append(f"#@dotconfig: public ({common_name})")
-    public_content = common_env.read_text().strip()
+    # --- Public (deployment) section ---
+    parts.append(f"#@dotconfig: public ({deployment})")
+    public_content = deploy_env.read_text().strip()
     if public_content:
         parts.append(public_content)
 
-    # --- Secrets (common) section ---
+    # --- Secrets (deployment) section ---
     parts.append("")
-    parts.append(f"#@dotconfig: secrets ({common_name})")
-    secrets_env = config_dir / common_name / "secrets.env"
+    parts.append(f"#@dotconfig: secrets ({deployment})")
+    secrets_env = config_dir / deployment / "secrets.env"
     if secrets_env.exists():
         decrypted = _decrypt_sops(secrets_env, sops_config)
         if decrypted and decrypted.strip():
@@ -108,11 +159,11 @@ def load_config(
     else:
         warn(f"secrets file not found: {secrets_env} — secrets section will be empty")
 
-    if local_name:
+    if local:
         # --- Public-local section ---
         parts.append("")
-        parts.append(f"#@dotconfig: public-local ({local_name})")
-        local_env = config_dir / "local" / local_name / "public.env"
+        parts.append(f"#@dotconfig: public-local ({local})")
+        local_env = config_dir / "local" / local / "public.env"
         if local_env.exists():
             local_content = local_env.read_text().strip()
             if local_content:
@@ -122,13 +173,19 @@ def load_config(
 
         # --- Secrets-local section ---
         parts.append("")
-        parts.append(f"#@dotconfig: secrets-local ({local_name})")
-        secrets_local = config_dir / "local" / local_name / "secrets.env"
+        parts.append(f"#@dotconfig: secrets-local ({local})")
+        secrets_local = config_dir / "local" / local / "secrets.env"
         if secrets_local.exists():
             decrypted = _decrypt_sops(secrets_local, sops_config)
             if decrypted and decrypted.strip():
                 parts.append(decrypted.strip())
 
-    # Ensure the file ends with a newline
-    output.write_text("\n".join(parts) + "\n")
-    ok(f"Written to {output}")
+    assembled = "\n".join(parts) + "\n"
+
+    if to_stdout:
+        click.echo(assembled, nl=False)
+    else:
+        if output is None:
+            output = Path(".env")
+        output.write_text(assembled)
+        ok(f"Written to {output}")

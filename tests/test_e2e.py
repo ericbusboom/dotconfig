@@ -1,8 +1,7 @@
 """End-to-end tests using fixture config directories.
 
 Each fixture lives under tests/fixtures/<name>.source/ and is copied to
-tests/fixtures/<name>/ before each test.  The working copy is disposable
-and gitignored; the source is checked in and never modified.
+a temp directory before each test.
 """
 
 import shutil
@@ -11,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from dotconfig.load import load_config
-from dotconfig.save import parse_env_file, save_config
+from dotconfig.load import load_config, load_file
+from dotconfig.save import parse_env_file, save_config, save_file
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -67,7 +66,7 @@ class TestLoadComplete:
             load_config("dev", "alice", complete, out)
 
         text = out.read_text()
-        assert "# CONFIG_COMMON=dev" in text
+        assert "# CONFIG_DEPLOY=dev" in text
         assert "# CONFIG_LOCAL=alice" in text
         assert "APP_DOMAIN=dev.example.com" in text
         assert "SESSION_SECRET=dev_session_secret_abc123" in text
@@ -75,13 +74,13 @@ class TestLoadComplete:
         assert "PERSONAL_API_TOKEN=alice_token_secret" in text
 
     def test_load_prod_no_local(self, complete, tmp_path):
-        """Load prod without local produces only common sections."""
+        """Load prod without local produces only deployment sections."""
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("prod", None, complete, out)
 
         text = out.read_text()
-        assert "# CONFIG_COMMON=prod" in text
+        assert "# CONFIG_DEPLOY=prod" in text
         assert "CONFIG_LOCAL" not in text
         assert "APP_DOMAIN=app.example.com" in text
         assert "STRIPE_API_KEY=sk_live_prodkey789" in text
@@ -109,8 +108,15 @@ class TestLoadComplete:
         assert "#@dotconfig: secrets (dev)" in text
         assert "#@dotconfig: public-local (alice)" in text
         assert "#@dotconfig: secrets-local (alice)" in text
-        # Old-style markers should NOT appear
         assert "# --- public (dev) ---" not in text
+
+    def test_load_to_stdout(self, complete, capsys):
+        """--stdout prints to stdout instead of writing a file."""
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", "alice", complete, None, to_stdout=True)
+        captured = capsys.readouterr()
+        assert "# CONFIG_DEPLOY=dev" in captured.out
+        assert "APP_DOMAIN=dev.example.com" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -180,19 +186,18 @@ class TestRoundTrip:
         assert "PORT=4000" in public.read_text()
         assert "PORT=3000" not in public.read_text()
 
-    def test_save_to_different_environment(self, complete, tmp_path):
+    def test_save_to_different_deployment(self, complete, tmp_path):
         """Load dev, save to staging — files land in staging/."""
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", "alice", complete, out)
 
         with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
-            save_config(out, complete, override_common="staging")
+            save_config(out, complete, override_deploy="staging")
 
         staging_public = complete / "staging" / "public.env"
         assert staging_public.exists()
         assert "APP_DOMAIN=dev.example.com" in staging_public.read_text()
-        # DEPLOYMENT should be rewritten to staging
         assert "DEPLOYMENT=staging" in staging_public.read_text()
 
     def test_save_to_different_user(self, complete, tmp_path):
@@ -207,6 +212,40 @@ class TestRoundTrip:
         charlie = complete / "local" / "charlie" / "public.env"
         assert charlie.exists()
         assert "DEV_DOCKER_CONTEXT=orbstack" in charlie.read_text()
+
+
+# ---------------------------------------------------------------------------
+# File mode — load_file / save_file
+# ---------------------------------------------------------------------------
+
+
+class TestFileMode:
+    def test_save_and_load_yaml(self, complete, tmp_path):
+        """Save a YAML file to a deployment and load it back."""
+        src = tmp_path / "app.yaml"
+        src.write_text("database:\n  host: localhost\n")
+        save_file("dev", None, "app.yaml", complete, source=src)
+        assert (complete / "dev" / "app.yaml").exists()
+
+        out = tmp_path / "loaded.yaml"
+        load_file("dev", None, "app.yaml", complete, out, to_stdout=False)
+        assert out.read_text() == "database:\n  host: localhost\n"
+
+    def test_save_and_load_local_json(self, complete, tmp_path):
+        """Save a JSON file to a local dir and load it back."""
+        src = tmp_path / "settings.json"
+        src.write_text('{"editor":"vim"}')
+        save_file(None, "alice", "settings.json", complete, source=src)
+
+        out = tmp_path / "loaded.json"
+        load_file(None, "alice", "settings.json", complete, out, to_stdout=False)
+        assert out.read_text() == '{"editor":"vim"}'
+
+    def test_load_file_stdout(self, complete, tmp_path, capsys):
+        """Load a file to stdout."""
+        (complete / "dev" / "app.yaml").write_text("key: value\n")
+        load_file("dev", None, "app.yaml", complete, None, to_stdout=True)
+        assert "key: value" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +264,8 @@ class TestEdgeCases:
         assert "APP_DOMAIN=dev.example.com" in text
         assert "#@dotconfig: secrets (dev)" in text
 
-    def test_nonexistent_environment_exits(self, complete, tmp_path):
-        """Loading a nonexistent environment exits with error."""
+    def test_nonexistent_deployment_exits(self, complete, tmp_path):
+        """Loading a nonexistent deployment exits with error."""
         out = tmp_path / ".env"
         with pytest.raises(SystemExit):
             load_config("nonexistent", None, complete, out)
@@ -255,7 +294,7 @@ class TestEdgeCases:
 
 class TestLegacyMarkers:
     def test_save_parses_legacy_env(self, complete, tmp_path):
-        """An .env with old-style # --- markers is still parsed correctly by save."""
+        """An .env with old-style markers and CONFIG_COMMON is still parsed correctly."""
         legacy_env = tmp_path / ".env"
         legacy_env.write_text("""\
 # CONFIG_COMMON=dev
@@ -283,7 +322,7 @@ DEV_DOCKER_CONTEXT=orbstack
     def test_user_subheadings_not_confused_with_sections(self, tmp_path):
         """Comments like '# --- GitHub OAuth ---' inside a section are NOT treated as section markers."""
         env_with_subheadings = """\
-# CONFIG_COMMON=dev
+# CONFIG_DEPLOY=dev
 
 #@dotconfig: public (dev)
 APP_DOMAIN=example.com
@@ -305,10 +344,9 @@ STRIPE_KEY=sk_test_123
         """With old markers, a user comment '# --- GitHub OAuth ---' DOES get confused.
 
         This test documents the problem that motivated switching to #@dotconfig: markers.
-        The old format would incorrectly split on user-authored subheadings.
         """
         env_with_collision = """\
-# CONFIG_COMMON=dev
+# CONFIG_DEPLOY=dev
 
 # --- secrets (dev) ---
 # --- GitHub OAuth ---
@@ -316,7 +354,5 @@ GITHUB_CLIENT_ID=gh_xxx
 STRIPE_KEY=sk_test_123
 """
         _, _, sections = parse_env_file(env_with_collision)
-        # The old parser splits on "# --- GitHub OAuth ---" creating a spurious section
         assert "GitHub OAuth" in sections
-        # And the secrets section loses the variables after the subheading
         assert "STRIPE_KEY" not in sections.get("secrets (dev)", "")

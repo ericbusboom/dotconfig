@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dotconfig.load import _decrypt_sops, load_config
+from dotconfig.load import _decrypt_sops, load_config, load_file
 
 
 @pytest.fixture()
@@ -49,7 +49,7 @@ def _fake_decrypt(filepath: Path, sops_config=None):
 # load_config — happy paths
 # ---------------------------------------------------------------------------
 
-class TestLoadConfigCommonOnly:
+class TestLoadConfigDeployOnly:
     def test_output_file_is_created(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
@@ -61,7 +61,7 @@ class TestLoadConfigCommonOnly:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
         text = out.read_text()
-        assert "# CONFIG_COMMON=dev" in text
+        assert "# CONFIG_DEPLOY=dev" in text
         assert "CONFIG_LOCAL" not in text
 
     def test_public_section_marker_present(self, config_dir, tmp_path):
@@ -90,7 +90,7 @@ class TestLoadConfigCommonOnly:
             load_config("dev", None, config_dir, out)
         assert "SESSION_SECRET=abc123" in out.read_text()
 
-    def test_no_local_sections_when_local_name_omitted(self, config_dir, tmp_path):
+    def test_no_local_sections_when_local_omitted(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
@@ -103,6 +103,12 @@ class TestLoadConfigCommonOnly:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out)
         assert out.read_text().endswith("\n")
+
+    def test_default_output_is_dot_env(self, config_dir, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, None)
+        assert (tmp_path / ".env").exists()
 
 
 class TestLoadConfigWithLocal:
@@ -149,8 +155,27 @@ class TestLoadConfigWithLocal:
         with patch("dotconfig.load._decrypt_sops", return_value=None):
             load_config("prod", None, config_dir, out)
         text = out.read_text()
-        assert "# CONFIG_COMMON=prod" in text
+        assert "# CONFIG_DEPLOY=prod" in text
         assert "APP_DOMAIN=prod.example.com" in text
+
+
+# ---------------------------------------------------------------------------
+# load_config — stdout mode
+# ---------------------------------------------------------------------------
+
+class TestLoadConfigStdout:
+    def test_stdout_prints_content(self, config_dir, capsys):
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, None, to_stdout=True)
+        captured = capsys.readouterr()
+        assert "# CONFIG_DEPLOY=dev" in captured.out
+        assert "APP_DOMAIN=example.com" in captured.out
+
+    def test_stdout_does_not_create_file(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, None, to_stdout=True)
+        assert not out.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +183,7 @@ class TestLoadConfigWithLocal:
 # ---------------------------------------------------------------------------
 
 class TestLoadConfigErrors:
-    def test_missing_common_env_exits(self, config_dir, tmp_path):
+    def test_missing_deploy_env_exits(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with pytest.raises(SystemExit):
             load_config("nonexistent", None, config_dir, out)
@@ -187,6 +212,50 @@ class TestLoadConfigErrors:
         # Section marker still present; variables not included
         assert "#@dotconfig: secrets (dev)" in text
         assert "SESSION_SECRET" not in text
+
+
+# ---------------------------------------------------------------------------
+# load_file — specific file retrieval
+# ---------------------------------------------------------------------------
+
+class TestLoadFile:
+    def test_load_deployment_file(self, config_dir, tmp_path):
+        (config_dir / "dev" / "app.yaml").write_text("key: value\n")
+        out = tmp_path / "app.yaml"
+        load_file("dev", None, "app.yaml", config_dir, out, to_stdout=False)
+        assert out.read_text() == "key: value\n"
+
+    def test_load_local_file(self, config_dir, tmp_path):
+        (config_dir / "local" / "alice" / "settings.json").write_text('{"a":1}')
+        out = tmp_path / "settings.json"
+        load_file(None, "alice", "settings.json", config_dir, out, to_stdout=False)
+        assert out.read_text() == '{"a":1}'
+
+    def test_load_file_default_output(self, config_dir, monkeypatch, tmp_path):
+        (config_dir / "dev" / "app.yaml").write_text("key: value\n")
+        monkeypatch.chdir(tmp_path)
+        load_file("dev", None, "app.yaml", config_dir, None, to_stdout=False)
+        assert (tmp_path / "app.yaml").exists()
+
+    def test_load_file_stdout(self, config_dir, capsys):
+        (config_dir / "dev" / "app.yaml").write_text("key: value\n")
+        load_file("dev", None, "app.yaml", config_dir, None, to_stdout=True)
+        assert "key: value" in capsys.readouterr().out
+
+    def test_load_file_not_found_exits(self, config_dir, tmp_path):
+        with pytest.raises(SystemExit):
+            load_file("dev", None, "nope.txt", config_dir, tmp_path / "out", to_stdout=False)
+
+    def test_load_file_no_deploy_no_local_exits(self, config_dir, tmp_path):
+        with pytest.raises(SystemExit):
+            load_file(None, None, "app.yaml", config_dir, tmp_path / "out", to_stdout=False)
+
+    def test_both_deploy_and_local_exits(self, config_dir, tmp_path):
+        """Specifying both deploy and local with --file is an error."""
+        (config_dir / "dev" / "app.yaml").write_text("deploy version")
+        out = tmp_path / "app.yaml"
+        with pytest.raises(SystemExit):
+            load_file("dev", "alice", "app.yaml", config_dir, out, to_stdout=False)
 
 
 # ---------------------------------------------------------------------------

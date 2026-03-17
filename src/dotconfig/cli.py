@@ -6,14 +6,19 @@ Commands
 dotconfig init
     Create the config/ directory structure and set up age encryption keys.
 
-dotconfig load <common_name> [local_name]
-    Assemble config/ source files into a single .env file.
+dotconfig load -d <deployment> [-l <local>] [--file <name>] [--stdout]
+    Assemble config/ source files into a single .env file, or retrieve
+    a specific file from a deployment.
 
-dotconfig save
-    Write .env sections back to their config/ source files.
+dotconfig save [-d <deployment>] [-l <local>] [--file <name>]
+    Write .env sections back to their config/ source files, or store
+    a specific file into a deployment.
 
 dotconfig keys
     Show age encryption key status and configuration.
+
+dotconfig config
+    Show dotconfig configuration and discovered paths.
 
 dotconfig agent
     Print full operational instructions for AI agents.
@@ -23,10 +28,11 @@ import click
 from pathlib import Path
 
 from .agent import show_agent_instructions
+from .config import show_config
 from .init import init_config
 from .keys import show_keys
-from .load import load_config
-from .save import save_config
+from .load import load_config, load_file
+from .save import save_config, save_file
 
 
 @click.group()
@@ -75,8 +81,18 @@ def init(config_dir: str) -> None:
 
 
 @cli.command()
-@click.argument("common_name")
-@click.argument("local_name", required=False, default=None)
+@click.option(
+    "-d", "--deploy",
+    required=False,
+    default=None,
+    help="Deployment / environment name (e.g. dev, prod, staging).",
+)
+@click.option(
+    "-l", "--local",
+    required=False,
+    default=None,
+    help="Local / developer name for personal overrides.",
+)
 @click.option(
     "--config-dir",
     default="config",
@@ -84,39 +100,86 @@ def init(config_dir: str) -> None:
     help="Root config directory.",
 )
 @click.option(
-    "--output",
-    default=".env",
-    show_default=True,
-    help="Destination .env file.",
+    "--output", "-o",
+    default=None,
+    help="Destination file.  [default: .env, or the filename from --file]",
+)
+@click.option(
+    "--file", "-f",
+    "filename",
+    default=None,
+    help="Load a specific file (e.g. foobar.yaml) instead of assembling .env.",
+)
+@click.option(
+    "--stdout", "to_stdout",
+    is_flag=True,
+    default=False,
+    help="Print to stdout instead of writing to a file.",
 )
 def load(
-    common_name: str,
-    local_name: str,
+    deploy: str,
+    local: str,
     config_dir: str,
     output: str,
+    filename: str,
+    to_stdout: bool,
 ) -> None:
-    """Assemble config files into .env.
+    """Assemble config files into .env, or load a specific file.
 
-    COMMON_NAME selects the environment (e.g. dev, prod, test).
-    LOCAL_NAME optionally adds a developer-specific override layer.
+    \b
+    Requires -d/--deploy to select the deployment (e.g. dev, prod).
+    Optionally add -l/--local for developer-specific overrides.
+
+    Use --file to retrieve a single file from the config directory
+    instead of assembling a full .env (specify -d or -l, not both).
+    Use --stdout to print to stdout instead of writing to disk
+    (useful for piping or agents).
 
     Example:
 
     \b
-        dotconfig load dev yourname      # dev + your local overrides
-        dotconfig load prod              # prod only, no local overrides
+        dotconfig load -d dev -l yourname
+        dotconfig load -d prod
+        dotconfig load -d dev --file app.yaml --stdout
+        dotconfig load -l alice --file settings.json -o out.json
     """
-    load_config(
-        common_name=common_name,
-        local_name=local_name,
-        config_dir=Path(config_dir),
-        output=Path(output),
-    )
+    cfg = Path(config_dir)
+    out = Path(output) if output else None
+
+    if filename:
+        load_file(
+            deployment=deploy,
+            local=local,
+            filename=filename,
+            config_dir=cfg,
+            output=out,
+            to_stdout=to_stdout,
+        )
+    else:
+        if not deploy:
+            raise click.UsageError("-d/--deploy is required when assembling .env")
+        load_config(
+            deployment=deploy,
+            local=local,
+            config_dir=cfg,
+            output=out,
+            to_stdout=to_stdout,
+        )
 
 
 @cli.command()
-@click.argument("common_name", required=False, default=None)
-@click.argument("local_name", required=False, default=None)
+@click.option(
+    "-d", "--deploy",
+    required=False,
+    default=None,
+    help="Target deployment name (overrides the .env metadata).",
+)
+@click.option(
+    "-l", "--local",
+    required=False,
+    default=None,
+    help="Target local / developer name (overrides the .env metadata).",
+)
 @click.option(
     "--env-file",
     default=".env",
@@ -129,32 +192,55 @@ def load(
     show_default=True,
     help="Root config directory.",
 )
-def save(common_name: str, local_name: str, env_file: str, config_dir: str) -> None:
-    """Save .env sections back to config/ source files.
+@click.option(
+    "--file", "-f",
+    "filename",
+    default=None,
+    help="Save a specific file (e.g. foobar.yaml) into the config directory.",
+)
+def save(
+    deploy: str,
+    local: str,
+    env_file: str,
+    config_dir: str,
+    filename: str,
+) -> None:
+    """Save .env sections back to config/ source files, or store a file.
 
-    Reads CONFIG_COMMON and CONFIG_LOCAL from the .env metadata, then
-    writes each section back to its corresponding source file, re-encrypting
-    secrets with SOPS.
+    \b
+    Without --file: reads CONFIG_DEPLOY and CONFIG_LOCAL from the .env
+    metadata, then writes each section back to its corresponding source
+    file, re-encrypting secrets with SOPS.  Optionally provide
+    -d/--deploy and -l/--local to redirect the output to a different
+    deployment or user.
 
-    Optionally provide COMMON_NAME and LOCAL_NAME to save to a different
-    environment or user than what was originally loaded.  For example,
-    after loading ``prod eric`` you can run ``dotconfig save dev stan`` to
-    write the same content to the dev/stan config files instead.
+    With --file: copies the named file into the deployment or local
+    config directory.
 
     Example:
 
     \b
         dotconfig save
-        dotconfig save dev stan
-        dotconfig save prod
-        dotconfig save --env-file .env.staging --config-dir config
+        dotconfig save -d dev -l stan
+        dotconfig save --file app.yaml -d dev
+        dotconfig save --file settings.json -l alice
     """
-    save_config(
-        env_file=Path(env_file),
-        config_dir=Path(config_dir),
-        override_common=common_name,
-        override_local=local_name,
-    )
+    cfg = Path(config_dir)
+
+    if filename:
+        save_file(
+            deployment=deploy,
+            local=local,
+            filename=filename,
+            config_dir=cfg,
+        )
+    else:
+        save_config(
+            env_file=Path(env_file),
+            config_dir=cfg,
+            override_deploy=deploy,
+            override_local=local,
+        )
 
 
 @cli.command()
@@ -171,6 +257,23 @@ def keys() -> None:
         dotconfig keys
     """
     show_keys()
+
+
+@cli.command()
+def config() -> None:
+    """Show dotconfig configuration and discovered paths.
+
+    Reports the installed version, the config directory name (from
+    DOTCONFIG_NAME or the default "config"), and where the config
+    directory was found by walking up the directory tree.
+
+    Example:
+
+    \b
+        dotconfig config
+        DOTCONFIG_NAME=.config dotconfig config
+    """
+    show_config()
 
 
 @cli.command()
