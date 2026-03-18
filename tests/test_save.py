@@ -8,6 +8,7 @@ import pytest
 
 from dotconfig.save import (
     REDACTED,
+    _content_has_secrets,
     _count_leaves,
     _dict_diff,
     _encrypt_sops,
@@ -633,6 +634,48 @@ class TestSaveFileAutoSplit:
         assert companion.exists()
         assert "REDACTED" in public.read_text()
         assert "abc123" in companion.read_text()
+
+
+# ---------------------------------------------------------------------------
+# save_file — raw file with secret content (e.g. private keys)
+# ---------------------------------------------------------------------------
+
+
+class TestSaveFileRawSecrets:
+    def test_private_key_auto_encrypted(self, config_dir, tmp_path):
+        """An extensionless file with a private key header is auto-encrypted."""
+        src = tmp_path / "id_rsa"
+        src.write_text(
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn\n"
+            "-----END RSA PRIVATE KEY-----\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt) as mock:
+            save_file("dev", None, "id_rsa", config_dir, source=src)
+        mock.assert_called_once()
+        assert (config_dir / "dev" / "id_rsa").exists()
+
+    def test_normal_text_file_not_encrypted(self, config_dir, tmp_path):
+        """A plain text file without secrets is written as-is."""
+        src = tmp_path / "notes.txt"
+        src.write_text("just some notes\nnothing secret here\n")
+        with patch("dotconfig.save._encrypt_sops") as mock:
+            save_file("dev", None, "notes.txt", config_dir, source=src)
+        mock.assert_not_called()
+        assert (config_dir / "dev" / "notes.txt").exists()
+        assert "just some notes" in (config_dir / "dev" / "notes.txt").read_text()
+
+    def test_source_path_uses_basename(self, config_dir, tmp_path):
+        """A full path like /home/user/.ssh/id_rsa stores as just 'id_rsa'."""
+        subdir = tmp_path / ".ssh"
+        subdir.mkdir()
+        src = subdir / "id_rsa"
+        src.write_text("not a real key\n")
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_file("dev", None, "id_rsa", config_dir, source=src)
+        # Should be stored under the basename, not the full path
+        assert (config_dir / "dev" / "id_rsa").exists()
+        assert not (config_dir / "dev" / ".ssh").exists()
 
 
 # ---------------------------------------------------------------------------

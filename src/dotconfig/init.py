@@ -25,7 +25,12 @@ from .output import created, error, heading, info, ok, updated, warn
 # Because sops.yaml lives inside config/, sops resolves file paths relative
 # to the config file's directory — so the regex must NOT include a "config/"
 # prefix.
-_SOPS_PATH_REGEX = r".+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
+# Matches secrets companion files (secrets.env, app.secrets.yaml, etc.)
+_SOPS_SECRETS_REGEX = r".+\.secrets\.(?:env|json|yaml|yml|txt|conf)$"
+# Matches legacy secrets.env files
+_SOPS_LEGACY_REGEX = r".+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
+# Catch-all for any file dotconfig encrypts under config/
+_SOPS_CATCHALL_REGEX = r".+"
 
 # Matches a valid age secret key line.
 _AGE_SECRET_KEY_RE = re.compile(r"^AGE-SECRET-KEY-[A-Za-z0-9]+$")
@@ -253,7 +258,13 @@ def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
     if not sops_yaml.exists():
         content = (
             "creation_rules:\n"
-            f"  - path_regex: {_SOPS_PATH_REGEX}\n"
+            f"  - path_regex: '{_SOPS_SECRETS_REGEX}'\n"
+            "    age: >-\n"
+            f"      {public_key}\n"
+            f"  - path_regex: '{_SOPS_LEGACY_REGEX}'\n"
+            "    age: >-\n"
+            f"      {public_key}\n"
+            f"  - path_regex: '{_SOPS_CATCHALL_REGEX}'\n"
             "    age: >-\n"
             f"      {public_key}\n"
         )

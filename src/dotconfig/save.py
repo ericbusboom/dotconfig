@@ -64,6 +64,30 @@ _DETECT_SECRETS_SETTINGS = {
 }
 
 
+def _content_has_secrets(content: str) -> bool:
+    """Return True if raw file content contains secret patterns.
+
+    Scans line by line using detect-secrets pattern-based plugins.
+    Catches private keys (``-----BEGIN``), embedded tokens, etc.
+    """
+    try:
+        from detect_secrets.core.scan import scan_line
+        from detect_secrets.settings import transient_settings
+
+        with transient_settings(_DETECT_SECRETS_SETTINGS):
+            for line in content.splitlines():
+                if any(True for _ in scan_line(line)):
+                    return True
+    except ImportError:
+        pass
+
+    # Also check for common private key headers directly
+    if "-----BEGIN" in content and "PRIVATE KEY" in content:
+        return True
+
+    return False
+
+
 def _is_secret_value(value: str) -> bool:
     """Return True if *value* matches known secret patterns via detect-secrets.
 
@@ -216,6 +240,26 @@ def _rewrite_deployment(body: str, target_deployment: str) -> str:
     return "\n".join(lines)
 
 
+def _extract_age_recipients(sops_config: Optional[Path]) -> Optional[str]:
+    """Extract the age recipient public keys from sops.yaml.
+
+    Returns the comma-separated public key string, or None if not found.
+    """
+    if sops_config is None or not sops_config.exists():
+        return None
+    try:
+        data = yaml.safe_load(sops_config.read_text())
+        if not data or "creation_rules" not in data:
+            return None
+        for rule in data["creation_rules"]:
+            age = rule.get("age", "").strip()
+            if age:
+                return age
+        return None
+    except Exception:
+        return None
+
+
 def _encrypt_sops(
     content: str, filepath: Path, sops_config: Optional[Path] = None
 ) -> bool:
@@ -228,15 +272,14 @@ def _encrypt_sops(
     ``--config`` so that a non-dotfile ``sops.yaml`` inside the config
     directory is found even when it would not be auto-discovered.
 
-    The file path passed to sops is kept relative (to the current working
-    directory) so that sops ``path_regex`` creation rules match correctly.
+    If the creation rules don't match the filename, falls back to
+    passing the age recipient key directly via ``--age``.
     """
     try:
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
 
         # Use a relative path so sops path_regex matching works correctly.
-        # Absolute paths can fail to match regex patterns like ".+/secrets\\.env$".
         try:
             sops_filepath = filepath.relative_to(Path.cwd())
         except ValueError:
@@ -252,8 +295,32 @@ def _encrypt_sops(
             capture_output=True,
             text=True,
         )
+
         if result.returncode != 0:
-            warn(f"sops encryption failed for {filepath}: {result.stderr.strip()}")
+            # If creation rules didn't match, retry with --age directly
+            if "no matching creation rules" in result.stderr:
+                age_keys = _extract_age_recipients(sops_config)
+                if age_keys:
+                    # Re-write plaintext (sops may have corrupted it)
+                    filepath.write_text(content)
+                    cmd_retry = [
+                        "sops", "--encrypt", "--in-place",
+                        "--age", age_keys,
+                        str(sops_filepath),
+                    ]
+                    retry = subprocess.run(
+                        cmd_retry,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if retry.returncode == 0:
+                        return True
+                    warn(f"sops encryption failed for {filepath}: {retry.stderr.strip()}")
+                else:
+                    warn(f"sops encryption failed for {filepath}: {result.stderr.strip()}")
+            else:
+                warn(f"sops encryption failed for {filepath}: {result.stderr.strip()}")
+
             # Remove the plaintext file on encryption failure
             filepath.unlink(missing_ok=True)
             return False
@@ -383,7 +450,11 @@ def _write_with_split(
             if _encrypt_sops(sec_content, companion_path, sops_config):
                 ok(f"→ {companion_path} 🔒")
             else:
-                warn(f"could not encrypt {companion_path}")
+                error(f"REFUSED: secrets detected but encryption failed for {companion_path}")
+                error("will not write secrets unencrypted — fix SOPS configuration")
+                # Remove the public file too — incomplete save is worse than no save
+                dest.unlink(missing_ok=True)
+                sys.exit(1)
             return
 
     elif suffix in _ENV_SUFFIXES:
@@ -397,10 +468,25 @@ def _write_with_split(
             if _encrypt_sops(sec_content, companion_path, sops_config):
                 ok(f"→ {companion_path} 🔒")
             else:
-                warn(f"could not encrypt {companion_path}")
+                error(f"REFUSED: secrets detected but encryption failed for {companion_path}")
+                error("will not write secrets unencrypted — fix SOPS configuration")
+                dest.unlink(missing_ok=True)
+                sys.exit(1)
             return
 
-    # No secrets found (or unrecognised format) — write as-is
+    # For unrecognised formats, scan the raw content for secret patterns.
+    # This catches things like private key files (-----BEGIN RSA PRIVATE KEY-----).
+    if _content_has_secrets(data_content):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if _encrypt_sops(data_content, dest, sops_config):
+            ok(f"→ {dest} 🔒 (secret content detected)")
+        else:
+            error(f"REFUSED: secret content detected but encryption failed for {dest}")
+            error("will not write secrets unencrypted — fix SOPS configuration")
+            sys.exit(1)
+        return
+
+    # No secrets found — write as-is
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(data_content)
     ok(f"→ {dest}")

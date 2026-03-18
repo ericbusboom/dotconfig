@@ -149,10 +149,11 @@ def load(
     out = Path(output) if output else None
 
     if filename:
+        file_path = Path(filename).expanduser()
         load_file(
             deployment=deploy,
             local=local,
-            filename=filename,
+            filename=file_path.name,
             config_dir=cfg,
             output=out,
             to_stdout=to_stdout,
@@ -242,11 +243,13 @@ def save(
         raise click.UsageError("--encrypt can only be used with --file")
 
     if filename:
+        file_path = Path(filename).expanduser()
         save_file(
             deployment=deploy,
             local=local,
-            filename=filename,
+            filename=file_path.name,
             config_dir=cfg,
+            source=file_path,
             encrypt=encrypt,
         )
     else:

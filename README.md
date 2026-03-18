@@ -296,7 +296,16 @@ invoking sops, so you do not need to export it manually.
 
 ```yaml
 creation_rules:
-  - path_regex: config/.+/secrets\.(?:env|json|yaml|yml|txt|conf)$
+  # Secrets companion files (app.secrets.yaml, etc.)
+  - path_regex: '.+\.secrets\.(?:env|json|yaml|yml|txt|conf)$'
+    age: >-
+      age1v3f2rn...,age1h02a69...
+  # Legacy secrets files (secrets.env, etc.)
+  - path_regex: '.+/secrets\.(?:env|json|yaml|yml|txt|conf)$'
+    age: >-
+      age1v3f2rn...,age1h02a69...
+  # Catch-all for any file dotconfig encrypts (private keys, etc.)
+  - path_regex: '.+'
     age: >-
       age1v3f2rn...,age1h02a69...
 ```
