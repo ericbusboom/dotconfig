@@ -302,11 +302,7 @@ def _read_env_layers(
     secrets_text = ""
     secrets_env = config_dir / deployment / "secrets.env"
     if secrets_env.exists():
-        decrypted = _decrypt_sops(secrets_env, sops_config)
-        if decrypted and decrypted.strip():
-            secrets_text = decrypted.strip()
-    else:
-        warn(f"secrets file not found: {secrets_env} — secrets section will be empty")
+        secrets_text = _read_file_content(secrets_env, sops_config).strip()
 
     local_public_text = ""
     local_secrets_text = ""
@@ -319,9 +315,7 @@ def _read_env_layers(
 
         secrets_local = config_dir / "local" / local / "secrets.env"
         if secrets_local.exists():
-            decrypted = _decrypt_sops(secrets_local, sops_config)
-            if decrypted and decrypted.strip():
-                local_secrets_text = decrypted.strip()
+            local_secrets_text = _read_file_content(secrets_local, sops_config).strip()
 
     return sops_config, public_text, secrets_text, local_public_text, local_secrets_text
 

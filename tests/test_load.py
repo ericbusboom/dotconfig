@@ -19,7 +19,9 @@ def config_dir(tmp_path: Path) -> Path:
     (cfg / "dev" / "public.env").write_text(
         "APP_DOMAIN=example.com\nNODE_ENV=development\nPORT=3000\n"
     )
-    (cfg / "dev" / "secrets.env").write_text("SESSION_SECRET=abc123\n")
+    (cfg / "dev" / "secrets.env").write_text(
+        "SESSION_SECRET=abc123\nsops_version=3.0\n"
+    )
 
     # Prod environment
     (cfg / "prod").mkdir(parents=True)
@@ -41,8 +43,9 @@ def config_dir(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def _fake_decrypt(filepath: Path, sops_config=None):
-    """Return file contents as-is (simulates successful sops decrypt)."""
-    return filepath.read_text()
+    """Return file contents with sops metadata stripped (simulates sops decrypt)."""
+    lines = filepath.read_text().splitlines()
+    return "\n".join(l for l in lines if not l.startswith("sops_")) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +208,15 @@ class TestLoadConfigErrors:
         assert out.exists()
 
     def test_sops_failure_gracefully_skipped(self, config_dir, tmp_path):
+        # Make secrets.env look SOPS-encrypted so _is_sops_encrypted returns True,
+        # then mock _decrypt_sops to simulate a decryption failure.
+        (config_dir / "dev" / "secrets.env").write_text(
+            "SESSION_SECRET=ENC[AES256_GCM,data:xx]\nsops_version=3.0\n"
+        )
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", return_value=None):
-            load_config("dev", None, config_dir, out)
-        text = out.read_text()
-        # Section marker still present; variables not included
-        assert "#@dotconfig: secrets (dev)" in text
-        assert "SESSION_SECRET" not in text
+            with pytest.raises(SystemExit):
+                load_config("dev", None, config_dir, out)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +372,8 @@ class TestLoadConfigSopsConfig:
 
         def capture_decrypt(filepath, sops_config=None):
             calls.append(sops_config)
-            return filepath.read_text()
+            lines = filepath.read_text().splitlines()
+            return "\n".join(l for l in lines if not l.startswith("sops_")) + "\n"
 
         with patch("dotconfig.load._decrypt_sops", side_effect=capture_decrypt):
             load_config("dev", None, config_dir, out)
@@ -383,7 +389,8 @@ class TestLoadConfigSopsConfig:
 
         def capture_decrypt(filepath, sops_config=None):
             calls.append(sops_config)
-            return filepath.read_text()
+            lines = filepath.read_text().splitlines()
+            return "\n".join(l for l in lines if not l.startswith("sops_")) + "\n"
 
         with patch("dotconfig.load._decrypt_sops", side_effect=capture_decrypt):
             load_config("dev", None, config_dir, out)
