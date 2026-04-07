@@ -21,6 +21,28 @@ import yaml
 from .output import error, ok, warn
 
 
+def _env_lines_to_dict(content: str) -> Dict[str, str]:
+    """Parse KEY=VALUE lines into a dict, skipping comments and blanks.
+
+    Surrounding quotes on values are stripped (both single and double).
+    """
+    result: Dict[str, str] = {}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # Strip surrounding quotes
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        result[key] = value
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Structured-file helpers (YAML / JSON deep merge)
 # ---------------------------------------------------------------------------
@@ -258,14 +280,62 @@ def load_file(
         ok(f"Written to {dest}")
 
 
+def _read_env_layers(
+    deployment: str,
+    local: Optional[str],
+    config_dir: Path,
+) -> tuple:
+    """Read the four .env layers and return their raw contents.
+
+    Returns ``(sops_config, public_text, secrets_text, local_public_text, local_secrets_text)``.
+    Missing layers return empty strings.
+    """
+    sops_config = config_dir / "sops.yaml"
+
+    deploy_env = config_dir / deployment / "public.env"
+    if not deploy_env.exists():
+        error(f"deployment config file not found: {deploy_env}")
+        sys.exit(1)
+
+    public_text = deploy_env.read_text().strip()
+
+    secrets_text = ""
+    secrets_env = config_dir / deployment / "secrets.env"
+    if secrets_env.exists():
+        decrypted = _decrypt_sops(secrets_env, sops_config)
+        if decrypted and decrypted.strip():
+            secrets_text = decrypted.strip()
+    else:
+        warn(f"secrets file not found: {secrets_env} — secrets section will be empty")
+
+    local_public_text = ""
+    local_secrets_text = ""
+    if local:
+        local_env = config_dir / "local" / local / "public.env"
+        if local_env.exists():
+            local_public_text = local_env.read_text().strip()
+        else:
+            warn(f"local config file not found: {local_env} — public-local section will be empty")
+
+        secrets_local = config_dir / "local" / local / "secrets.env"
+        if secrets_local.exists():
+            decrypted = _decrypt_sops(secrets_local, sops_config)
+            if decrypted and decrypted.strip():
+                local_secrets_text = decrypted.strip()
+
+    return sops_config, public_text, secrets_text, local_public_text, local_secrets_text
+
+
 def load_config(
     deployment: str,
     local: Optional[str],
     config_dir: Path,
     output: Optional[Path],
     to_stdout: bool = False,
+    fmt: str = "env",
+    flat: bool = False,
 ) -> None:
-    """Assemble config source files into a single .env file.
+    """Assemble config source files into a single .env, JSON, or YAML file.
 
     Reads from:
       - config/{deployment}/public.env            (public deployment config)
@@ -273,86 +343,95 @@ def load_config(
       - config/local/{local}/public.env           (public local overrides, optional)
       - config/local/{local}/secrets.env          (encrypted local secrets, optional)
 
-    Writes a .env with marked sections:
-      # CONFIG_DEPLOY={deployment}
-      # CONFIG_LOCAL={local}   (if local is provided)
+    When *fmt* is ``"env"`` (default), writes a .env with marked sections
+    that enable round-tripping via the save command.
 
-      #@dotconfig: public ({deployment})
-      ...
-      #@dotconfig: secrets ({deployment})
-      ...
-      #@dotconfig: public-local ({local})   (if local is provided)
-      ...
-      #@dotconfig: secrets-local ({local})  (if local is provided)
-      ...
+    When *fmt* is ``"json"`` or ``"yaml"``, writes a structured file with
+    top-level keys for each deployment/local name and ``public``/``secrets``
+    sub-keys.  A ``_dotconfig`` metadata key records the deployment and
+    local names for round-tripping.
 
-    Later sections override earlier ones (last-write-wins when shell-sourced).
+    When *flat* is True (requires ``"json"`` or ``"yaml"``), all layers are
+    merged into a single flat dict (last-write-wins).
+
+    Default output filenames: ``.env``, ``.env.json``, or ``.env.yaml``.
 
     When *to_stdout* is True the assembled content is printed to stdout
     instead of being written to a file.
     """
-    deploy_env = config_dir / deployment / "public.env"
-    if not deploy_env.exists():
-        error(f"deployment config file not found: {deploy_env}")
-        sys.exit(1)
+    _, public_text, secrets_text, local_public_text, local_secrets_text = (
+        _read_env_layers(deployment, local, config_dir)
+    )
 
-    parts = []
+    if fmt in ("json", "yaml"):
+        # ---- Structured output ----
+        public_dict = _env_lines_to_dict(public_text)
+        secrets_dict = _env_lines_to_dict(secrets_text)
+        local_public_dict = _env_lines_to_dict(local_public_text)
+        local_secrets_dict = _env_lines_to_dict(local_secrets_text)
 
-    # Locate the sops config file so it can be passed explicitly to sops.
-    # sops.yaml is a non-dotfile and is not auto-discovered by sops, so we
-    # must pass --config when invoking sops.
-    sops_config = config_dir / "sops.yaml"
-
-    # --- Metadata header ---
-    parts.append(f"# CONFIG_DEPLOY={deployment}")
-    if local:
-        parts.append(f"# CONFIG_LOCAL={local}")
-    parts.append("")
-
-    # --- Public (deployment) section ---
-    parts.append(f"#@dotconfig: public ({deployment})")
-    public_content = deploy_env.read_text().strip()
-    if public_content:
-        parts.append(public_content)
-
-    # --- Secrets (deployment) section ---
-    parts.append("")
-    parts.append(f"#@dotconfig: secrets ({deployment})")
-    secrets_env = config_dir / deployment / "secrets.env"
-    if secrets_env.exists():
-        decrypted = _decrypt_sops(secrets_env, sops_config)
-        if decrypted and decrypted.strip():
-            parts.append(decrypted.strip())
-    else:
-        warn(f"secrets file not found: {secrets_env} — secrets section will be empty")
-
-    if local:
-        # --- Public-local section ---
-        parts.append("")
-        parts.append(f"#@dotconfig: public-local ({local})")
-        local_env = config_dir / "local" / local / "public.env"
-        if local_env.exists():
-            local_content = local_env.read_text().strip()
-            if local_content:
-                parts.append(local_content)
+        if flat:
+            result: Any = {}
+            result.update(public_dict)
+            result.update(secrets_dict)
+            result.update(local_public_dict)
+            result.update(local_secrets_dict)
         else:
-            warn(f"local config file not found: {local_env} — public-local section will be empty")
+            result = {
+                "_dotconfig": {"deploy": deployment},
+                deployment: {
+                    "public": public_dict,
+                    "secrets": secrets_dict,
+                },
+            }
+            if local:
+                result["_dotconfig"]["local"] = local
+                result[local] = {
+                    "public": local_public_dict,
+                    "secrets": local_secrets_dict,
+                }
 
-        # --- Secrets-local section ---
+        if fmt == "json":
+            assembled = json.dumps(result, indent=2) + "\n"
+            default_output = Path(".env.json")
+        else:
+            assembled = yaml.dump(result, default_flow_style=False, sort_keys=False)
+            default_output = Path(".env.yaml")
+    else:
+        # ---- Classic .env output ----
+        parts: list = []
+
+        parts.append(f"# CONFIG_DEPLOY={deployment}")
+        if local:
+            parts.append(f"# CONFIG_LOCAL={local}")
         parts.append("")
-        parts.append(f"#@dotconfig: secrets-local ({local})")
-        secrets_local = config_dir / "local" / local / "secrets.env"
-        if secrets_local.exists():
-            decrypted = _decrypt_sops(secrets_local, sops_config)
-            if decrypted and decrypted.strip():
-                parts.append(decrypted.strip())
 
-    assembled = "\n".join(parts) + "\n"
+        parts.append(f"#@dotconfig: public ({deployment})")
+        if public_text:
+            parts.append(public_text)
+
+        parts.append("")
+        parts.append(f"#@dotconfig: secrets ({deployment})")
+        if secrets_text:
+            parts.append(secrets_text)
+
+        if local:
+            parts.append("")
+            parts.append(f"#@dotconfig: public-local ({local})")
+            if local_public_text:
+                parts.append(local_public_text)
+
+            parts.append("")
+            parts.append(f"#@dotconfig: secrets-local ({local})")
+            if local_secrets_text:
+                parts.append(local_secrets_text)
+
+        assembled = "\n".join(parts) + "\n"
+        default_output = Path(".env")
 
     if to_stdout:
         click.echo(assembled, nl=False)
     else:
-        if output is None:
-            output = Path(".env")
-        output.write_text(assembled)
-        ok(f"Written to {output}")
+        dest = output if output else default_output
+        dest.write_text(assembled)
+        ok(f"Written to {dest}")

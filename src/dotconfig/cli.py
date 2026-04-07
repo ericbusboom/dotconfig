@@ -113,10 +113,28 @@ def init(config_dir: str) -> None:
     help="Load a specific file (e.g. foobar.yaml) instead of assembling .env.",
 )
 @click.option(
-    "--stdout", "to_stdout",
+    "-S", "--stdout", "to_stdout",
     is_flag=True,
     default=False,
     help="Print to stdout instead of writing to a file.",
+)
+@click.option(
+    "--json", "use_json",
+    is_flag=True,
+    default=False,
+    help="Output as JSON (.env.json).",
+)
+@click.option(
+    "--yaml", "use_yaml",
+    is_flag=True,
+    default=False,
+    help="Output as YAML (.env.yaml).",
+)
+@click.option(
+    "-F", "--flat",
+    is_flag=True,
+    default=False,
+    help="Flatten all sections into a single dict (requires --json or --yaml).",
 )
 def load(
     deploy: str,
@@ -125,6 +143,9 @@ def load(
     output: str,
     filename: str,
     to_stdout: bool,
+    use_json: bool,
+    use_yaml: bool,
+    flat: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -134,21 +155,37 @@ def load(
 
     Use --file to retrieve a single file from the config directory
     instead of assembling a full .env (specify -d or -l, not both).
-    Use --stdout to print to stdout instead of writing to disk
+    Use -S/--stdout to print to stdout instead of writing to disk
     (useful for piping or agents).
+
+    Use --json or --yaml to output as a structured file with deployment
+    sections and public/secrets sub-keys.  Use -F/--flat to merge all
+    layers into a single flat dict (last-write-wins).
 
     Example:
 
     \b
         dotconfig load -d dev -l yourname
         dotconfig load -d prod
+        dotconfig load -d dev --json
+        dotconfig load -d dev -l alice --yaml --flat
+        dotconfig load -d dev --json -S
         dotconfig load -d dev --file app.yaml --stdout
         dotconfig load -l alice --file settings.json -o out.json
     """
+    if use_json and use_yaml:
+        raise click.UsageError("--json and --yaml are mutually exclusive")
+    if flat and not (use_json or use_yaml):
+        raise click.UsageError("--flat requires --json or --yaml")
+
+    fmt = "json" if use_json else ("yaml" if use_yaml else "env")
+
     cfg = Path(config_dir)
     out = Path(output) if output else None
 
     if filename:
+        if fmt != "env":
+            raise click.UsageError("--json/--yaml cannot be used with --file")
         file_path = Path(filename).expanduser()
         load_file(
             deployment=deploy,
@@ -167,6 +204,8 @@ def load(
             config_dir=cfg,
             output=out,
             to_stdout=to_stdout,
+            fmt=fmt,
+            flat=flat,
         )
 
 
@@ -207,6 +246,24 @@ def load(
     default=False,
     help="Encrypt the file with SOPS (only with --file).",
 )
+@click.option(
+    "--json", "use_json",
+    is_flag=True,
+    default=False,
+    help="Read from .env.json instead of .env.",
+)
+@click.option(
+    "--yaml", "use_yaml",
+    is_flag=True,
+    default=False,
+    help="Read from .env.yaml instead of .env.",
+)
+@click.option(
+    "-F", "--flat",
+    is_flag=True,
+    default=False,
+    help="Input is a flat dict (requires --json or --yaml; can only update existing keys).",
+)
 def save(
     deploy: str,
     local: str,
@@ -214,6 +271,9 @@ def save(
     config_dir: str,
     filename: str,
     encrypt: bool,
+    use_json: bool,
+    use_yaml: bool,
+    flat: bool,
 ) -> None:
     """Save .env sections back to config/ source files, or store a file.
 
@@ -224,6 +284,11 @@ def save(
     -d/--deploy and -l/--local to redirect the output to a different
     deployment or user.
 
+    Use --json or --yaml to read from a structured file (.env.json or
+    .env.yaml) instead of .env.  Use -F/--flat when the input is a flat
+    dict with no sections — only existing keys can be updated in flat
+    mode (new keys are rejected because there is no section info).
+
     With --file: copies the named file into the deployment or local
     config directory.  Add -e/--encrypt to encrypt the file with SOPS.
     Encrypted files are automatically decrypted on load.
@@ -233,16 +298,36 @@ def save(
     \b
         dotconfig save
         dotconfig save -d dev -l stan
+        dotconfig save --json
+        dotconfig save --yaml -d dev -l alice --flat
         dotconfig save --file app.yaml -d dev
         dotconfig save --file secrets.yaml -d dev --encrypt
         dotconfig save --file settings.json -l alice
     """
+    if use_json and use_yaml:
+        raise click.UsageError("--json and --yaml are mutually exclusive")
+    if flat and not (use_json or use_yaml):
+        raise click.UsageError("--flat requires --json or --yaml")
+
     cfg = Path(config_dir)
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
 
+    # Determine the format and default input file
+    fmt = "env"
+    if use_json:
+        fmt = "json"
+        if env_file == ".env":
+            env_file = ".env.json"
+    elif use_yaml:
+        fmt = "yaml"
+        if env_file == ".env":
+            env_file = ".env.yaml"
+
     if filename:
+        if fmt != "env":
+            raise click.UsageError("--json/--yaml cannot be used with --file")
         file_path = Path(filename).expanduser()
         save_file(
             deployment=deploy,
@@ -258,6 +343,8 @@ def save(
             config_dir=cfg,
             override_deploy=deploy,
             override_local=local,
+            fmt=fmt,
+            flat=flat,
         )
 
 

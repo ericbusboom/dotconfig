@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from .audit import _key_looks_secret
+from .load import _env_lines_to_dict
 from .output import error, heading, info, ok, warn
 
 
@@ -563,11 +564,182 @@ def save_file(
         _write_with_split(content, dest, filename, config_dir, encrypt)
 
 
+def _dict_to_env_lines(data: Dict[str, Any]) -> str:
+    """Convert a flat dict to KEY=VALUE lines."""
+    lines = []
+    for key, value in data.items():
+        lines.append(f"{key}={value}")
+    return "\n".join(lines) + "\n" if lines else ""
+
+
+def _save_config_structured(
+    env_file: Path,
+    config_dir: Path,
+    override_deploy: Optional[str],
+    override_local: Optional[str],
+    fmt: str,
+    flat: bool,
+) -> None:
+    """Save a structured (JSON/YAML) config file back to config/ sources.
+
+    Handles both sectioned format (with ``_dotconfig`` metadata and
+    deployment/local top-level keys) and flat format (plain key-value dict
+    matched against existing source files).
+    """
+    content = env_file.read_text()
+    if fmt == "json":
+        data = json.loads(content)
+    else:
+        data = yaml.safe_load(content) or {}
+
+    sops_config = config_dir / "sops.yaml"
+    saved: List[Tuple[str, str]] = []
+
+    if flat:
+        # Flat mode: match each key to the source file that currently owns it.
+        deployment = override_deploy
+        local_name = override_local
+
+        if not deployment:
+            error("-d/--deploy is required when saving flat format")
+            sys.exit(1)
+
+        # Read existing layers to find key ownership
+        existing: Dict[str, Dict[str, str]] = {}
+        layer_order = ["public", "secrets"]
+        paths = {
+            "public": config_dir / deployment / "public.env",
+            "secrets": config_dir / deployment / "secrets.env",
+        }
+
+        if local_name:
+            layer_order += ["local_public", "local_secrets"]
+            paths["local_public"] = config_dir / "local" / local_name / "public.env"
+            paths["local_secrets"] = config_dir / "local" / local_name / "secrets.env"
+
+        for layer_name in layer_order:
+            p = paths[layer_name]
+            if not p.exists():
+                existing[layer_name] = {}
+                continue
+            if "secrets" in layer_name:
+                from .load import _decrypt_sops
+                decrypted = _decrypt_sops(p, sops_config)
+                existing[layer_name] = _env_lines_to_dict(decrypted) if decrypted else {}
+            else:
+                existing[layer_name] = _env_lines_to_dict(p.read_text())
+
+        # Match keys to most-specific existing layer (reverse order)
+        unmatched = []
+        for key, value in data.items():
+            matched = False
+            for layer_name in reversed(layer_order):
+                if key in existing[layer_name]:
+                    existing[layer_name][key] = str(value)
+                    matched = True
+                    break
+            if not matched:
+                unmatched.append(key)
+
+        if unmatched:
+            error(f"cannot save new keys in flat mode (no section info): {', '.join(unmatched)}")
+            sys.exit(1)
+
+        # Write back modified layers
+        for layer_name in layer_order:
+            if not existing[layer_name]:
+                continue
+            p = paths[layer_name]
+            env_content = _dict_to_env_lines(existing[layer_name])
+            p.parent.mkdir(parents=True, exist_ok=True)
+
+            if "secrets" in layer_name:
+                if _encrypt_sops(env_content, p, sops_config):
+                    saved.append((f"{layer_name} 🔒", str(p)))
+                else:
+                    warn(f"could not encrypt {layer_name}")
+            else:
+                p.write_text(env_content)
+                saved.append((layer_name, str(p)))
+
+    else:
+        # Sectioned mode: _dotconfig metadata maps sections to source files
+        meta = data.get("_dotconfig", {})
+        deployment = override_deploy or meta.get("deploy")
+        local_name = override_local or meta.get("local")
+
+        if not deployment:
+            error(
+                "no deployment found — provide -d/--deploy or "
+                "include _dotconfig.deploy in the file"
+            )
+            sys.exit(1)
+
+        save_deploy = override_deploy if override_deploy else deployment
+        save_local = override_local if override_local else local_name
+
+        # Deployment sections
+        deploy_data = data.get(meta.get("deploy", deployment), {})
+        public_dict = deploy_data.get("public", {})
+        secrets_dict = deploy_data.get("secrets", {})
+
+        if public_dict:
+            p = config_dir / save_deploy / "public.env"
+            env_content = _dict_to_env_lines(public_dict)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(env_content)
+            saved.append(("public config", str(p)))
+
+        if secrets_dict:
+            p = config_dir / save_deploy / "secrets.env"
+            env_content = _dict_to_env_lines(secrets_dict)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if _encrypt_sops(env_content, p, sops_config):
+                saved.append(("secrets 🔒", str(p)))
+            else:
+                warn(f"could not encrypt secrets for {save_deploy}")
+
+        # Local sections
+        source_local = meta.get("local")
+        if source_local and source_local in data:
+            local_data = data[source_local]
+            local_public_dict = local_data.get("public", {})
+            local_secrets_dict = local_data.get("secrets", {})
+
+            if local_public_dict:
+                p = config_dir / "local" / save_local / "public.env"
+                env_content = _dict_to_env_lines(local_public_dict)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(env_content)
+                saved.append(("public-local config", str(p)))
+
+            if local_secrets_dict:
+                p = config_dir / "local" / save_local / "secrets.env"
+                env_content = _dict_to_env_lines(local_secrets_dict)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                if _encrypt_sops(env_content, p, sops_config):
+                    saved.append(("secrets-local 🔒", str(p)))
+                else:
+                    warn(f"could not encrypt local secrets for {save_local}")
+
+    if saved:
+        heading("💾 Saved:")
+        for label, path in saved:
+            ok(f"{label} → {path}")
+
+        from .audit import run_audit
+        run_audit(config_dir)
+    else:
+        warn("Nothing saved.")
+
+
 def save_config(
     env_file: Path,
     config_dir: Path,
     override_deploy: Optional[str] = None,
     override_local: Optional[str] = None,
+    fmt: str = "env",
+    flat: bool = False,
 ) -> None:
     """Save .env sections back to the config/ source files.
 
@@ -592,6 +764,20 @@ def save_config(
     if not env_file.exists():
         error(f"{env_file} does not exist")
         sys.exit(1)
+
+    # Auto-detect format from file extension when not explicitly set
+    if fmt == "env":
+        suffix = env_file.suffix.lower()
+        if suffix == ".json":
+            fmt = "json"
+        elif suffix in (".yaml", ".yml"):
+            fmt = "yaml"
+
+    if fmt != "env":
+        _save_config_structured(
+            env_file, config_dir, override_deploy, override_local, fmt, flat
+        )
+        return
 
     content = env_file.read_text()
 
