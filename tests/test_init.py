@@ -677,3 +677,83 @@ class TestInitConfigEnvFiles:
 
         # Values must be preserved after second run
         assert "APP_ENV=development" in (config_dir / "dev" / "public.env").read_text()
+
+
+# ---------------------------------------------------------------------------
+# init_config — quiet mode
+# ---------------------------------------------------------------------------
+
+class TestInitConfigQuietMode:
+    def test_quiet_mode_no_output(self, tmp_path, capsys):
+        """quiet=True suppresses all stdout and stderr output."""
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir, quiet=True)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_quiet_mode_still_creates_files(self, tmp_path):
+        """quiet=True still creates all expected files even without output."""
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir, quiet=True)
+        assert (config_dir / "dev" / "public.env").exists()
+        assert (config_dir / "dev" / "secrets.env").exists()
+        assert (config_dir / "prod" / "public.env").exists()
+        assert (config_dir / "prod" / "secrets.env").exists()
+        assert (config_dir / "local" / "testuser" / "public.env").exists()
+        assert (config_dir / "AGENTS.md").exists()
+        assert (config_dir / "sops.yaml").exists()
+
+    def test_quiet_mode_auto_generates_key(self, tmp_path):
+        """quiet=True auto-answers yes to key generation without prompting."""
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("dotconfig.init._generate_age_key", return_value=FAKE_SECRET_KEY) as mock_gen,
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+            patch("builtins.input") as mock_input,
+        ):
+            init_config(config_dir, quiet=True)
+        # input() must never be called in quiet mode
+        mock_input.assert_not_called()
+        # _generate_age_key must be called to create the key
+        mock_gen.assert_called_once()
+        # sops.yaml must contain the generated key
+        assert FAKE_PUBLIC_KEY in (config_dir / "sops.yaml").read_text()
+
+    def test_quiet_mode_no_key_no_age_exits(self, tmp_path):
+        """quiet=True calls sys.exit(1) when age is not installed."""
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                init_config(config_dir, quiet=True)
+        assert exc_info.value.code == 1
+
+    def test_quiet_mode_generate_fails_exits(self, tmp_path):
+        """quiet=True calls sys.exit(1) when key generation fails."""
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=True),
+            patch("dotconfig.init._generate_age_key", return_value=None),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                init_config(config_dir, quiet=True)
+        assert exc_info.value.code == 1

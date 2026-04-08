@@ -245,7 +245,7 @@ def _add_key_to_sops_yaml(content: str, public_key: str) -> str:
     return "\n".join(result) + "\n"
 
 
-def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
+def _update_sops_yaml(config_dir: Path, public_key: str, quiet: bool = False) -> None:
     """Create or update ``sops.yaml`` in *config_dir* with *public_key*.
 
     * If ``sops.yaml`` does not exist, a new file is created with a default
@@ -269,19 +269,22 @@ def _update_sops_yaml(config_dir: Path, public_key: str) -> None:
             f"      {public_key}\n"
         )
         sops_yaml.write_text(content)
-        created(f"{sops_yaml}")
-        info(f"added public key {public_key}")
+        if not quiet:
+            created(f"{sops_yaml}")
+            info(f"added public key {public_key}")
         return
 
     existing = sops_yaml.read_text()
     if public_key in existing:
-        ok(f"{sops_yaml} (key already listed)")
+        if not quiet:
+            ok(f"{sops_yaml} (key already listed)")
         return
 
     updated_content = _add_key_to_sops_yaml(existing, public_key)
     sops_yaml.write_text(updated_content)
-    updated(f"{sops_yaml}")
-    info(f"added public key {public_key}")
+    if not quiet:
+        updated(f"{sops_yaml}")
+        info(f"added public key {public_key}")
 
 
 _AGENTS_MD_CONTENT = """\
@@ -349,7 +352,7 @@ so `dotconfig save` can round-trip edits back to the correct source files.
 """
 
 
-def _write_agents_md(config_dir: Path) -> None:
+def _write_agents_md(config_dir: Path, quiet: bool = False) -> None:
     """Write an AGENTS.md file into *config_dir* explaining dotconfig usage.
 
     If the file already exists it is overwritten, since it is generated
@@ -359,13 +362,16 @@ def _write_agents_md(config_dir: Path) -> None:
     if agents_md.exists():
         existing = agents_md.read_text()
         if existing == _AGENTS_MD_CONTENT:
-            ok(str(agents_md))
+            if not quiet:
+                ok(str(agents_md))
             return
         agents_md.write_text(_AGENTS_MD_CONTENT)
-        updated(str(agents_md))
+        if not quiet:
+            updated(str(agents_md))
     else:
         agents_md.write_text(_AGENTS_MD_CONTENT)
-        created(str(agents_md))
+        if not quiet:
+            created(str(agents_md))
 
 
 def _get_current_user() -> str:
@@ -373,7 +379,7 @@ def _get_current_user() -> str:
     return getpass.getuser()
 
 
-def _create_env_if_missing(path: Path) -> None:
+def _create_env_if_missing(path: Path, quiet: bool = False) -> None:
     """Create an empty .env file at *path* if it does not already exist.
 
     Prints a ``created`` message on creation or ``ok`` if the file is
@@ -381,12 +387,14 @@ def _create_env_if_missing(path: Path) -> None:
     """
     if not path.exists():
         path.write_text("")
-        created(str(path))
+        if not quiet:
+            created(str(path))
     else:
-        ok(str(path))
+        if not quiet:
+            ok(str(path))
 
 
-def _init_env_files(config_dir: Path, current_user: str) -> None:
+def _init_env_files(config_dir: Path, current_user: str, quiet: bool = False) -> None:
     """Create empty env files for default deployments and the current user.
 
     Creates the following files if they do not already exist (empty):
@@ -401,21 +409,22 @@ def _init_env_files(config_dir: Path, current_user: str) -> None:
     Subdirectories are created automatically if they do not already exist.
     On every run, existing files are left completely untouched.
     """
-    heading("📁 Environment files:")
+    if not quiet:
+        heading("📁 Environment files:")
 
     for env_name in _DEFAULT_ENVS:
         env_dir = config_dir / env_name
         env_dir.mkdir(parents=True, exist_ok=True)
-        _create_env_if_missing(env_dir / "public.env")
-        _create_env_if_missing(env_dir / "secrets.env")
+        _create_env_if_missing(env_dir / "public.env", quiet=quiet)
+        _create_env_if_missing(env_dir / "secrets.env", quiet=quiet)
 
     local_user_dir = config_dir / "local" / current_user
     local_user_dir.mkdir(parents=True, exist_ok=True)
-    _create_env_if_missing(local_user_dir / "public.env")
-    _create_env_if_missing(local_user_dir / "secrets.env")
+    _create_env_if_missing(local_user_dir / "public.env", quiet=quiet)
+    _create_env_if_missing(local_user_dir / "secrets.env", quiet=quiet)
 
 
-def init_config(config_dir: Path) -> None:
+def init_config(config_dir: Path, quiet: bool = False) -> None:
     """Initialise the dotconfig directory structure.
 
     Creates the two standard top-level directories under *config_dir*:
@@ -438,8 +447,13 @@ def init_config(config_dir: Path) -> None:
     derives the corresponding public key, and ensures that key is listed in
     ``sops.yaml`` inside *config_dir*.  If no key is found, guidance is
     printed instead.
+
+    When *quiet* is ``True``, all output is suppressed and interactive
+    prompts are auto-answered "yes".  On error (age not installed or key
+    generation failed) ``sys.exit(1)`` is called.
     """
-    heading("📦 Initialising dotconfig:")
+    if not quiet:
+        heading("📦 Initialising dotconfig:")
 
     dirs = [
         config_dir,
@@ -449,52 +463,65 @@ def init_config(config_dir: Path) -> None:
     for d in dirs:
         if d.exists():
             if d.is_dir():
-                ok(f"{d}/")
+                if not quiet:
+                    ok(f"{d}/")
             else:
-                warn(f"{d} exists but is not a directory")
+                if not quiet:
+                    warn(f"{d} exists but is not a directory")
         else:
             d.mkdir(parents=True, exist_ok=True)
-            created(f"{d}/")
+            if not quiet:
+                created(f"{d}/")
 
     # ---- Env-file setup ----------------------------------------
     current_user = _get_current_user()
-    _init_env_files(config_dir, current_user)
+    _init_env_files(config_dir, current_user, quiet=quiet)
 
     # ---- AGENTS.md -------------------------------------------------------
-    heading("📄 Agent documentation:")
-    _write_agents_md(config_dir)
+    if not quiet:
+        heading("📄 Agent documentation:")
+    _write_agents_md(config_dir, quiet=quiet)
 
     # ---- Key setup --------------------------------------------------------
-    heading("🔑 Setting up age encryption key:")
+    if not quiet:
+        heading("🔑 Setting up age encryption key:")
 
     secret_key = _discover_age_key()
     default_key_file = Path.home() / ".config" / "sops" / "age" / "keys.txt"
 
     if secret_key is None:
         if not _is_age_installed():
+            if quiet:
+                sys.exit(1)
             error("age is not installed.")
             info("Install it from: https://github.com/FiloSottile/age#installation")
             info("Then re-run: dotconfig init")
             return
 
         # age is installed but no key was found — explain and ask
-        warn("No age key found. Looked in:")
-        info("  1. SOPS_AGE_KEY environment variable")
-        info("  2. SOPS_AGE_KEY_FILE environment variable")
-        info(f"  3. {default_key_file}")
-        print()
-        answer = input(
-            f"  Generate a new key at {default_key_file}? [Y/n] "
-        ).strip().lower()
+        if quiet:
+            answer = "y"
+        else:
+            warn("No age key found. Looked in:")
+            info("  1. SOPS_AGE_KEY environment variable")
+            info("  2. SOPS_AGE_KEY_FILE environment variable")
+            info(f"  3. {default_key_file}")
+            print()
+            answer = input(
+                f"  Generate a new key at {default_key_file}? [Y/n] "
+            ).strip().lower()
         if answer and answer not in ("y", "yes"):
             info("Skipping key setup. Re-run dotconfig init after configuring your key.")
             return
 
         secret_key = _generate_age_key()
         if secret_key is None:
+            if quiet:
+                sys.exit(1)
             error("Failed to generate age key.")
             return
-        created(f"key at {default_key_file}")
+        if not quiet:
+            created(f"key at {default_key_file}")
         source = str(default_key_file)
     else:
         # Report where the existing key was found
@@ -504,14 +531,16 @@ def init_config(config_dir: Path) -> None:
             source = f"SOPS_AGE_KEY_FILE ({os.environ['SOPS_AGE_KEY_FILE']})"
         else:
             source = str(default_key_file)
-    ok(f"key: {source}")
+    if not quiet:
+        ok(f"key: {source}")
 
     public_key = _derive_public_key(secret_key)
     if public_key is None:
-        warn("Could not derive public key — skipping sops.yaml update")
+        if not quiet:
+            warn("Could not derive public key — skipping sops.yaml update")
         return
 
-    info(f"public key: {public_key}")
-
-    heading("📝 Updating sops.yaml:")
-    _update_sops_yaml(config_dir, public_key)
+    if not quiet:
+        info(f"public key: {public_key}")
+        heading("📝 Updating sops.yaml:")
+    _update_sops_yaml(config_dir, public_key, quiet=quiet)

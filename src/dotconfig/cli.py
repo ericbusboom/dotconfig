@@ -58,7 +58,13 @@ def cli() -> None:
     show_default=True,
     help="Root config directory to create.",
 )
-def init(config_dir: str) -> None:
+@click.option(
+    "-q", "--quiet",
+    is_flag=True,
+    default=False,
+    help="Suppress output and auto-answer prompts (for CI/Codespaces).",
+)
+def init(config_dir: str, quiet: bool) -> None:
     """Initialise the config directory structure and set up age encryption.
 
     Creates the following directories (skips any that already exist):
@@ -78,8 +84,9 @@ def init(config_dir: str) -> None:
     \b
         dotconfig init
         dotconfig init --config-dir myconfig
+        dotconfig init -q
     """
-    init_config(config_dir=Path(config_dir))
+    init_config(config_dir=Path(config_dir), quiet=quiet)
 
 
 @cli.command()
