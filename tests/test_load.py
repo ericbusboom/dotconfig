@@ -107,11 +107,26 @@ class TestLoadConfigDeployOnly:
             load_config("dev", None, config_dir, out)
         assert out.read_text().endswith("\n")
 
-    def test_default_output_is_dot_env(self, config_dir, monkeypatch, tmp_path):
+    def test_default_output_is_config_files(self, config_dir, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, None)
-        assert (tmp_path / ".env").exists()
+        assert (tmp_path / "config" / "files" / ".env").exists()
+
+    def test_config_files_gitignore_created(self, config_dir, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, None)
+        gitignore = tmp_path / "config" / "files" / ".gitignore"
+        assert gitignore.exists()
+        assert "*" in gitignore.read_text()
+
+    def test_output_file_permissions(self, config_dir, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, None)
+        dest = tmp_path / "config" / "files" / ".env"
+        assert oct(dest.stat().st_mode & 0o777) == "0o600"
 
 
 class TestLoadConfigWithLocal:
@@ -237,11 +252,18 @@ class TestLoadFile:
         import json
         assert json.loads(out.read_text()) == {"a": 1}
 
-    def test_load_file_default_output(self, config_dir, monkeypatch, tmp_path):
+    def test_load_file_default_output_is_config_files(self, config_dir, monkeypatch, tmp_path):
         (config_dir / "dev" / "app.yaml").write_text("key: value\n")
         monkeypatch.chdir(tmp_path)
         load_file("dev", None, "app.yaml", config_dir, None, to_stdout=False)
-        assert (tmp_path / "app.yaml").exists()
+        assert (tmp_path / "config" / "files" / "app.yaml").exists()
+
+    def test_load_file_explicit_output(self, config_dir, tmp_path):
+        (config_dir / "dev" / "app.yaml").write_text("key: value\n")
+        out = tmp_path / "custom" / "output.yaml"
+        load_file("dev", None, "app.yaml", config_dir, out, to_stdout=False)
+        assert out.exists()
+        assert out.read_text() == "key: value\n"
 
     def test_load_file_stdout(self, config_dir, capsys):
         (config_dir / "dev" / "app.yaml").write_text("key: value\n")

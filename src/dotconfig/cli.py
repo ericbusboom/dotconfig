@@ -87,12 +87,16 @@ def init(config_dir: str) -> None:
     "-d", "--deploy",
     required=False,
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Deployment / environment name (e.g. dev, prod, staging).",
 )
 @click.option(
     "-l", "--local",
     required=False,
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Local / developer name for personal overrides.",
 )
 @click.option(
@@ -104,12 +108,16 @@ def init(config_dir: str) -> None:
 @click.option(
     "--output", "-o",
     default=None,
-    help="Destination file.  [default: .env, or the filename from --file]",
+    is_flag=False,
+    flag_value=".",
+    help="Destination file.  Without a value, writes to CWD.  [default: config/files/]",
 )
 @click.option(
     "--file", "-f",
     "filename",
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Load a specific file (e.g. foobar.yaml) instead of assembling .env.",
 )
 @click.option(
@@ -181,7 +189,19 @@ def load(
     fmt = "json" if use_json else ("yaml" if use_yaml else "env")
 
     cfg = Path(config_dir)
-    out = Path(output) if output else None
+
+    # Resolve -o flag: None = config/files/ (default), "." = CWD, else explicit path
+    if output == ".":
+        # -o without value: use CWD with source filename
+        if filename:
+            out = Path(Path(filename).name)
+        else:
+            fmt_ext = {"env": ".env", "json": ".env.json", "yaml": ".env.yaml"}
+            out = Path(fmt_ext.get(fmt, ".env"))
+    elif output:
+        out = Path(output)
+    else:
+        out = None
 
     if filename:
         if fmt != "env":
@@ -214,12 +234,16 @@ def load(
     "-d", "--deploy",
     required=False,
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Target deployment name (overrides the .env metadata).",
 )
 @click.option(
     "-l", "--local",
     required=False,
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Target local / developer name (overrides the .env metadata).",
 )
 @click.option(
@@ -238,6 +262,8 @@ def load(
     "--file", "-f",
     "filename",
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Save a specific file (e.g. foobar.yaml) into the config directory.",
 )
 @click.option(
@@ -368,6 +394,8 @@ def keys() -> None:
 @click.option(
     "-c", "--config-dir",
     default=None,
+    is_flag=False,
+    flag_value=".",
     help="Root config directory.  [default: auto-discovered or 'config']",
 )
 def audit(config_dir: str) -> None:
