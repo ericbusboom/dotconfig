@@ -444,12 +444,7 @@ def load_config(
     if to_stdout:
         click.echo(assembled, nl=False)
     else:
-        if output:
-            dest = output
-        else:
-            files_dir = _ensure_files_dir()
-            dest = files_dir / default_output.name
+        dest = output if output else default_output
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(assembled)
-        dest.chmod(0o600)
         ok(f"Written to {dest}")
