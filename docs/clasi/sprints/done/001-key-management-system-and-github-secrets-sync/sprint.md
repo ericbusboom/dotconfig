@@ -1,9 +1,12 @@
 ---
-id: "001"
-title: "Key Management System and GitHub Secrets Sync"
-status: planning
+id: '001'
+title: Key Management System and GitHub Secrets Sync
+status: done
 branch: sprint/001-key-management-system-and-github-secrets-sync
-use-cases: [SUC-001, SUC-002, SUC-003]
+use-cases:
+- SUC-001
+- SUC-002
+- SUC-003
 ---
 
 # Sprint 001: Key Management System and GitHub Secrets Sync
