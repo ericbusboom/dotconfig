@@ -14,8 +14,11 @@ dotconfig save [-d <deployment>] [-l <local>] [--file <name>]
     Write .env sections back to their config/ source files, or store
     a specific file into a deployment.
 
-dotconfig keys
-    Show age encryption key status and configuration.
+dotconfig key <subcommand>
+    Manage SSH keys (gen, save, get, pub, list, rm, send).
+
+dotconfig gh-push -d <deployment>
+    Push deployment secrets to GitHub Actions / Codespaces.
 
 dotconfig config
     Show dotconfig configuration and discovered paths.
@@ -30,9 +33,10 @@ from pathlib import Path
 from .agent import show_agent_instructions
 from .audit import run_audit
 from .config import show_config
+from .gh_push import gh_push as _gh_push
 from .hooks import install_pre_commit_hook
 from .init import init_config
-from .keys import show_keys
+from .key import gen_key, get_key, list_keys, pub_key, rm_key, save_key, send_key
 from .load import load_config, load_file
 from .save import save_config, save_file
 
@@ -381,20 +385,183 @@ def save(
         )
 
 
-@cli.command()
-def keys() -> None:
-    """Show age encryption key status and configuration.
+@cli.group()
+def key() -> None:
+    """Manage SSH keys stored in config/keys/.
 
-    Inspects your environment for age keys, reports where SOPS will
-    find your secret key, shows the derived public key, and prints
-    export statements for configuring environment variables.
-
-    Example:
+    Keys are SOPS-encrypted at rest. Use subcommands to generate,
+    import, retrieve, list, remove, or send keys to remote hosts.
 
     \b
-        dotconfig keys
+        dotconfig key gen deploy --type ed25519
+        dotconfig key list
+        dotconfig key send myhost
     """
-    show_keys()
+
+
+@key.command("gen")
+@click.argument("name")
+@click.option("--type", "key_type", default="ed25519", show_default=True,
+              type=click.Choice(["ed25519", "rsa", "ecdsa"]),
+              help="Key type to generate.")
+@click.option("--bits", default=None, type=int,
+              help="Key size in bits (RSA only).")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_gen(name: str, key_type: str, bits: int, config_dir: str) -> None:
+    """Generate an SSH keypair.
+
+    \b
+        dotconfig key gen deploy
+        dotconfig key gen deploy --type rsa --bits 4096
+    """
+    cfg = Path(config_dir) if config_dir else None
+    gen_key(name, key_type=key_type, bits=bits, config_dir=cfg)
+
+
+@key.command("save")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--name", default=None, help="Override the stored key name.")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_save(file: str, name: str, config_dir: str) -> None:
+    """Import an existing key file.
+
+    Encrypts the private key with SOPS and stores it in config/keys/.
+    Auto-grabs the .pub companion if it exists.
+
+    \b
+        dotconfig key save ~/.ssh/id_ed25519
+        dotconfig key save deploy.pem --name deploy
+    """
+    cfg = Path(config_dir) if config_dir else None
+    save_key(Path(file), name=name, config_dir=cfg)
+
+
+@key.command("get")
+@click.argument("name")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_get(name: str, config_dir: str) -> None:
+    """Decrypt and print a private key to stdout.
+
+    \b
+        dotconfig key get deploy
+    """
+    cfg = Path(config_dir) if config_dir else None
+    get_key(name, config_dir=cfg)
+
+
+@key.command("pub")
+@click.argument("name")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_pub(name: str, config_dir: str) -> None:
+    """Print the public key for a named key.
+
+    Uses the .pub file if it exists, otherwise derives from the
+    private key via ssh-keygen.
+
+    \b
+        dotconfig key pub deploy
+    """
+    cfg = Path(config_dir) if config_dir else None
+    pub_key(name, config_dir=cfg)
+
+
+@key.command("list")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_list(config_dir: str) -> None:
+    """List all keys in config/keys/.
+
+    \b
+        dotconfig key list
+    """
+    cfg = Path(config_dir) if config_dir else None
+    list_keys(config_dir=cfg)
+
+
+@key.command("rm")
+@click.argument("name")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_rm(name: str, config_dir: str) -> None:
+    """Remove a key and its .pub companion.
+
+    \b
+        dotconfig key rm deploy
+    """
+    cfg = Path(config_dir) if config_dir else None
+    rm_key(name, config_dir=cfg)
+
+
+@key.command("send")
+@click.argument("host")
+@click.option("--key", "key_name", default=None,
+              help="Key name to send (defaults to host name).")
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+def key_send(host: str, key_name: str, config_dir: str) -> None:
+    """Send a public key to a remote host via ssh-copy-id.
+
+    By default the key name matches the host argument.
+
+    \b
+        dotconfig key send myhost
+        dotconfig key send myhost --key deploy_ed25519
+    """
+    cfg = Path(config_dir) if config_dir else None
+    send_key(host, key_name=key_name, config_dir=cfg)
+
+
+@cli.command("gh-push")
+@click.option("-d", "--deploy", required=True,
+              help="Deployment name to sync secrets from.")
+@click.option("-c", "--config-dir", default="config", show_default=True,
+              help="Root config directory.")
+@click.option("--repo", default=None,
+              help="GitHub repo (owner/repo). Auto-detected from git remote.")
+@click.option("--actions", is_flag=True, default=False,
+              help="Push to Actions only (default: both Actions + Codespaces).")
+@click.option("--codespaces", is_flag=True, default=False,
+              help="Push to Codespaces only (default: both Actions + Codespaces).")
+@click.option("--include-age-key", is_flag=True, default=False,
+              help="Include the SOPS age decryption key.")
+@click.option("--environment", default=None,
+              help="Push to a GitHub environment instead of repo-level.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show what would be pushed without pushing.")
+@click.option("--keys", "keys_csv", default=None,
+              help="Comma-separated list of specific keys to push.")
+def gh_push_cmd(
+    deploy: str,
+    config_dir: str,
+    repo: str,
+    actions: bool,
+    codespaces: bool,
+    include_age_key: bool,
+    environment: str,
+    dry_run: bool,
+    keys_csv: str,
+) -> None:
+    """Push deployment secrets to GitHub Actions / Codespaces.
+
+    Loads all secrets for the named deployment and pushes each one
+    as a GitHub repository secret via the gh CLI.
+
+    \b
+        dotconfig gh-push -d prod
+        dotconfig gh-push -d prod --dry-run
+        dotconfig gh-push -d prod --actions
+        dotconfig gh-push -d prod --environment prod
+        dotconfig gh-push -d prod --include-age-key
+    """
+    keys_filter = [k.strip() for k in keys_csv.split(",")] if keys_csv else None
+    _gh_push(
+        deployment=deploy,
+        config_dir=Path(config_dir),
+        repo=repo,
+        actions=actions,
+        codespaces=codespaces,
+        include_age_key=include_age_key,
+        environment=environment,
+        dry_run=dry_run,
+        keys_filter=keys_filter,
+    )
 
 
 @cli.command()

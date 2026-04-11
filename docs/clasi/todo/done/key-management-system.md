@@ -1,5 +1,9 @@
 ---
-status: pending
+status: done
+sprint: '001'
+tickets:
+- '001'
+- '002'
 ---
 
 # Key management system — `dotconfig key`
@@ -28,6 +32,7 @@ but keys have different requirements than config files:
 | `dotconfig key pub <name>` | Print public key (from `.pub` file, or derived from private key via `ssh-keygen -y`) |
 | `dotconfig key list` | List all keys with types and public key status |
 | `dotconfig key rm <name>` | Remove a key and its `.pub` |
+| `dotconfig key send <host>` | Send a public key to a remote host via `ssh-copy-id`. By default the key name matches `<host>`, but `--key <name>` overrides which key to send |
 
 ## Storage layout
 
