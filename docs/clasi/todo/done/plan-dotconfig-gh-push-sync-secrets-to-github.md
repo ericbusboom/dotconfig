@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: done
 sprint: '001'
 tickets:
-- 001-003
+- '003'
 ---
 
 # Plan: `dotconfig gh-push` — Sync Secrets to GitHub

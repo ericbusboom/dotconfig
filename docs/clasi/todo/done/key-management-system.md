@@ -1,9 +1,9 @@
 ---
-status: in-progress
+status: done
 sprint: '001'
 tickets:
-- 001-001
-- 001-002
+- '001'
+- '002'
 ---
 
 # Key management system — `dotconfig key`
