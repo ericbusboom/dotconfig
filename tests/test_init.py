@@ -8,6 +8,7 @@ import pytest
 
 from dotconfig.init import (
     _AGENTS_MD_CONTENT,
+    _GITIGNORE_PATTERNS,
     _add_key_to_sops_yaml,
     _create_env_if_missing,
     _derive_public_key,
@@ -18,6 +19,7 @@ from dotconfig.init import (
     _init_env_files,
     _is_age_installed,
     _read_key_from_file,
+    _update_gitignore,
     _update_sops_yaml,
     _write_agents_md,
     init_config,
@@ -485,6 +487,74 @@ class TestWriteAgentsMd:
 
 
 # ---------------------------------------------------------------------------
+# _update_gitignore
+# ---------------------------------------------------------------------------
+
+class TestUpdateGitignore:
+    def test_creates_gitignore_when_missing(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        _update_gitignore(config_dir)
+        gitignore = tmp_path / ".gitignore"
+        assert gitignore.exists()
+        content = gitignore.read_text()
+        assert ".env" in content
+        assert ".env.*" in content
+        assert "!.env.example" in content
+
+    def test_reports_created(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        _update_gitignore(config_dir)
+        out = capsys.readouterr().out
+        assert "+" in out
+
+    def test_appends_missing_patterns(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("node_modules/\n__pycache__/\n")
+        _update_gitignore(config_dir)
+        content = gitignore.read_text()
+        assert "node_modules/" in content
+        assert ".env" in content
+        assert ".env.*" in content
+
+    def test_reports_updated(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (tmp_path / ".gitignore").write_text("node_modules/\n")
+        _update_gitignore(config_dir)
+        out = capsys.readouterr().out
+        assert "~" in out
+
+    def test_no_op_when_patterns_present(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text("\n".join(_GITIGNORE_PATTERNS) + "\n")
+        mtime = gitignore.stat().st_mtime_ns
+        _update_gitignore(config_dir)
+        assert gitignore.stat().st_mtime_ns == mtime
+
+    def test_reports_ok_when_no_changes(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (tmp_path / ".gitignore").write_text("\n".join(_GITIGNORE_PATTERNS) + "\n")
+        _update_gitignore(config_dir)
+        out = capsys.readouterr().out
+        assert "✓" in out
+
+    def test_quiet_mode_no_output(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        _update_gitignore(config_dir, quiet=True)
+        assert (tmp_path / ".gitignore").exists()
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+
+# ---------------------------------------------------------------------------
 # _get_current_user
 # ---------------------------------------------------------------------------
 
@@ -655,6 +725,20 @@ class TestInitConfigEnvFiles:
         agents_md = config_dir / "AGENTS.md"
         assert agents_md.exists()
         assert "dotconfig" in agents_md.read_text()
+
+    def test_gitignore_created(self, tmp_path):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        gitignore = tmp_path / ".gitignore"
+        assert gitignore.exists()
+        content = gitignore.read_text()
+        assert ".env" in content
+        assert ".env.*" in content
 
     def test_existing_env_files_not_overwritten(self, tmp_path):
         config_dir = tmp_path / "config"
