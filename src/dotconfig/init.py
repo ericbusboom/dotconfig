@@ -352,6 +352,42 @@ so `dotconfig save` can round-trip edits back to the correct source files.
 """
 
 
+_GITIGNORE_PATTERNS = [
+    "# dotconfig — assembled env files contain decrypted secrets",
+    ".env",
+    ".env.*",
+    "!.env.example",
+]
+
+
+def _update_gitignore(config_dir: Path, quiet: bool = False) -> None:
+    """Create or update ``.gitignore`` in the project root with env patterns.
+
+    Appends only patterns that are not already present.  The project root
+    is assumed to be the parent of *config_dir*.
+    """
+    gitignore = config_dir.parent / ".gitignore"
+
+    if gitignore.exists():
+        existing = gitignore.read_text()
+        existing_lines = set(existing.splitlines())
+        missing = [p for p in _GITIGNORE_PATTERNS if p not in existing_lines]
+        if not missing:
+            if not quiet:
+                ok(str(gitignore))
+            return
+        # Ensure we start on a new line
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        gitignore.write_text(existing + "\n".join(missing) + "\n")
+        if not quiet:
+            updated(str(gitignore))
+    else:
+        gitignore.write_text("\n".join(_GITIGNORE_PATTERNS) + "\n")
+        if not quiet:
+            created(str(gitignore))
+
+
 def _write_agents_md(config_dir: Path, quiet: bool = False) -> None:
     """Write an AGENTS.md file into *config_dir* explaining dotconfig usage.
 
@@ -481,6 +517,11 @@ def init_config(config_dir: Path, quiet: bool = False) -> None:
     if not quiet:
         heading("📄 Agent documentation:")
     _write_agents_md(config_dir, quiet=quiet)
+
+    # ---- .gitignore ------------------------------------------------------
+    if not quiet:
+        heading("📝 Updating .gitignore:")
+    _update_gitignore(config_dir, quiet=quiet)
 
     # ---- Key setup --------------------------------------------------------
     if not quiet:
