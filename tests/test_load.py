@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dotconfig.load import _decrypt_sops, _deep_merge, _is_sops_encrypted, load_config, load_file
+from dotconfig.load import _decrypt_sops, _deep_merge, _is_sops_encrypted, _split_path, load_config, load_file
 
 
 @pytest.fixture()
@@ -519,3 +519,83 @@ class TestLoadFileAutoDecrypt:
         with patch("dotconfig.load._decrypt_sops", return_value=None):
             with pytest.raises(SystemExit):
                 load_file("dev", None, "secrets.yaml", config_dir, tmp_path / "out", to_stdout=False)
+
+
+# ---------------------------------------------------------------------------
+# _split_path
+# ---------------------------------------------------------------------------
+
+class TestSplitPath:
+    def test_env(self):
+        assert _split_path(Path(".env")) == Path(".env.secret")
+
+    def test_env_json(self):
+        assert _split_path(Path(".env.json")) == Path(".env.secret.json")
+
+    def test_env_yaml(self):
+        assert _split_path(Path(".env.yaml")) == Path(".env.secret.yaml")
+
+    def test_other(self):
+        assert _split_path(Path("config.txt")) == Path("config.secret.txt")
+
+
+# ---------------------------------------------------------------------------
+# load_config --split
+# ---------------------------------------------------------------------------
+
+class TestLoadConfigSplit:
+    def test_split_creates_two_files(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, split=True)
+        assert out.exists()
+        assert (tmp_path / ".env.secret").exists()
+
+    def test_split_public_file_has_public_values(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, split=True)
+        text = out.read_text()
+        assert "APP_DOMAIN" in text
+        assert "SESSION_SECRET" not in text
+
+    def test_split_secret_file_has_secret_values(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, split=True)
+        secret_text = (tmp_path / ".env.secret").read_text()
+        assert "SESSION_SECRET" in secret_text
+        assert "APP_DOMAIN" not in secret_text
+
+    def test_split_no_secret_file_when_no_secrets(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        load_config("prod", None, config_dir, out, split=True)
+        assert out.exists()
+        assert not (tmp_path / ".env.secret").exists()
+
+    def test_split_json(self, config_dir, tmp_path):
+        out = tmp_path / ".env.json"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, fmt="json", split=True)
+        assert out.exists()
+        assert (tmp_path / ".env.secret.json").exists()
+        import json
+        public = json.loads(out.read_text())
+        secret = json.loads((tmp_path / ".env.secret.json").read_text())
+        assert "APP_DOMAIN" in public
+        assert "SESSION_SECRET" in secret
+
+    def test_split_with_local(self, config_dir, tmp_path):
+        # Add local secrets
+        local_dir = config_dir / "local" / "alice"
+        (local_dir / "secrets.env").write_text("LOCAL_SECRET=xyz\n")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", "alice", config_dir, out, split=True)
+        text = out.read_text()
+        secret_text = (tmp_path / ".env.secret").read_text()
+        # Local public values in main file
+        assert "DEV_DOCKER_CONTEXT" in text
+        # Local secret values in secret file
+        assert "LOCAL_SECRET" in secret_text
