@@ -338,6 +338,20 @@ def _read_env_layers(
     return sops_config, public_text, secrets_text, local_public_text, local_secrets_text
 
 
+def _split_path(dest: Path) -> Path:
+    """Return the ``.secret`` companion path for *dest*.
+
+    ``.env`` → ``.env.secret``, ``.env.json`` → ``.env.secret.json``.
+    """
+    name = dest.name
+    if name.startswith(".env"):
+        # .env -> .env.secret, .env.json -> .env.secret.json
+        rest = name[4:]  # everything after ".env"
+        return dest.with_name(f".env.secret{rest}")
+    # fallback: insert .secret before extension
+    return dest.with_name(f"{dest.stem}.secret{dest.suffix}")
+
+
 def load_config(
     deployment: str,
     local: Optional[str],
@@ -346,6 +360,7 @@ def load_config(
     to_stdout: bool = False,
     fmt: str = "env",
     flat: bool = False,
+    split: bool = False,
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
@@ -366,6 +381,10 @@ def load_config(
     When *flat* is True (requires ``"json"`` or ``"yaml"``), all layers are
     merged into a single flat dict (last-write-wins).
 
+    When *split* is True, public values are written to the main output file
+    and secret values are written to a ``.secret`` companion file
+    (e.g. ``.env`` + ``.env.secret``).
+
     Default output filenames: ``.env``, ``.env.json``, or ``.env.yaml``.
 
     When *to_stdout* is True the assembled content is printed to stdout
@@ -375,7 +394,64 @@ def load_config(
         _read_env_layers(deployment, local, config_dir)
     )
 
-    if fmt in ("json", "yaml"):
+    if split:
+        # ---- Split mode: public file + secret companion ----
+        if fmt in ("json", "yaml"):
+            public_dict = _env_lines_to_dict(public_text)
+            secrets_dict = _env_lines_to_dict(secrets_text)
+            local_public_dict = _env_lines_to_dict(local_public_text)
+            local_secrets_dict = _env_lines_to_dict(local_secrets_text)
+
+            public_merged: Dict[str, str] = {}
+            public_merged.update(public_dict)
+            public_merged.update(local_public_dict)
+
+            secrets_merged: Dict[str, str] = {}
+            secrets_merged.update(secrets_dict)
+            secrets_merged.update(local_secrets_dict)
+
+            serialize = json.dumps if fmt == "json" else yaml.dump
+            if fmt == "json":
+                public_assembled = json.dumps(public_merged, indent=2) + "\n"
+                secrets_assembled = json.dumps(secrets_merged, indent=2) + "\n"
+                default_output = Path(".env.json")
+            else:
+                public_assembled = yaml.dump(public_merged, default_flow_style=False, sort_keys=False)
+                secrets_assembled = yaml.dump(secrets_merged, default_flow_style=False, sort_keys=False)
+                default_output = Path(".env.yaml")
+        else:
+            # .env format
+            public_parts: list = []
+            public_parts.append(f"# CONFIG_DEPLOY={deployment}")
+            if local:
+                public_parts.append(f"# CONFIG_LOCAL={local}")
+            public_parts.append("")
+            if public_text:
+                public_parts.append(public_text)
+            if local_public_text:
+                public_parts.append(local_public_text)
+            public_assembled = "\n".join(public_parts) + "\n"
+
+            secrets_parts: list = []
+            if secrets_text:
+                secrets_parts.append(secrets_text)
+            if local_secrets_text:
+                secrets_parts.append(local_secrets_text)
+            secrets_assembled = "\n".join(secrets_parts) + "\n" if secrets_parts else ""
+
+            default_output = Path(".env")
+
+        dest = output if output else default_output
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(public_assembled)
+        ok(f"Written to {dest}")
+
+        if secrets_assembled.strip():
+            secret_dest = _split_path(dest)
+            secret_dest.write_text(secrets_assembled)
+            ok(f"Written to {secret_dest}")
+
+    elif fmt in ("json", "yaml"):
         # ---- Structured output ----
         public_dict = _env_lines_to_dict(public_text)
         secrets_dict = _env_lines_to_dict(secrets_text)
@@ -409,6 +485,14 @@ def load_config(
         else:
             assembled = yaml.dump(result, default_flow_style=False, sort_keys=False)
             default_output = Path(".env.yaml")
+
+        if to_stdout:
+            click.echo(assembled, nl=False)
+        else:
+            dest = output if output else default_output
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(assembled)
+            ok(f"Written to {dest}")
     else:
         # ---- Classic .env output ----
         parts: list = []
@@ -441,10 +525,10 @@ def load_config(
         assembled = "\n".join(parts) + "\n"
         default_output = Path(".env")
 
-    if to_stdout:
-        click.echo(assembled, nl=False)
-    else:
-        dest = output if output else default_output
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(assembled)
-        ok(f"Written to {dest}")
+        if to_stdout:
+            click.echo(assembled, nl=False)
+        else:
+            dest = output if output else default_output
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(assembled)
+            ok(f"Written to {dest}")

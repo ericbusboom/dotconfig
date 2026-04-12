@@ -155,6 +155,12 @@ def init(config_dir: str, quiet: bool) -> None:
     default=False,
     help="Flatten all sections into a single dict (requires --json or --yaml).",
 )
+@click.option(
+    "--split",
+    is_flag=True,
+    default=False,
+    help="Write public and secret values to separate files (.env + .env.secret).",
+)
 def load(
     deploy: str,
     local: str,
@@ -165,6 +171,7 @@ def load(
     use_json: bool,
     use_yaml: bool,
     flat: bool,
+    split: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -181,6 +188,9 @@ def load(
     sections and public/secrets sub-keys.  Use -F/--flat to merge all
     layers into a single flat dict (last-write-wins).
 
+    Use --split to write public values to the main file and secret
+    values to a companion .secret file (e.g. .env + .env.secret).
+
     Example:
 
     \b
@@ -191,11 +201,16 @@ def load(
         dotconfig load -d dev --json -S
         dotconfig load -d dev --file app.yaml --stdout
         dotconfig load -l alice --file settings.json -o out.json
+        dotconfig load -d prod --split
     """
     if use_json and use_yaml:
         raise click.UsageError("--json and --yaml are mutually exclusive")
     if flat and not (use_json or use_yaml):
         raise click.UsageError("--flat requires --json or --yaml")
+    if split and to_stdout:
+        raise click.UsageError("--split cannot be used with --stdout")
+    if split and filename:
+        raise click.UsageError("--split cannot be used with --file")
 
     fmt = "json" if use_json else ("yaml" if use_yaml else "env")
 
@@ -237,6 +252,7 @@ def load(
             to_stdout=to_stdout,
             fmt=fmt,
             flat=flat,
+            split=split,
         )
 
 
