@@ -1,7 +1,7 @@
 ---
-id: "002"
-title: "Positional load/save args and gitignore TODO archive"
-status: planning
+id: '002'
+title: Positional load/save args and gitignore TODO archive
+status: done
 branch: sprint/002-positional-load-save-args-and-gitignore-todo-archive
 use-cases:
 - SUC-001
