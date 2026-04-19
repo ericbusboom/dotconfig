@@ -29,6 +29,7 @@ dotconfig agent
 
 import click
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 from .agent import show_agent_instructions
 from .audit import run_audit
@@ -39,6 +40,74 @@ from .init import init_config
 from .key import gen_key, get_key, list_keys, pub_key, rm_key, save_key, send_key
 from .load import load_config, load_file
 from .save import save_config, save_file
+
+
+def _classify_load_args(
+    names: Tuple[str, ...], config_dir: Path
+) -> Tuple[List[str], List[str]]:
+    """Classify positional names against the config directory layout.
+
+    A name is a *deployment* if ``config/<name>/`` exists, a *local* if
+    ``config/local/<name>/`` exists. Within each type, the order of names
+    on the command line is preserved (it determines the layer order
+    last-write-wins).
+
+    Raises ``click.UsageError`` for:
+      - a name that doesn't exist as either a deployment or a local
+      - a name that exists as both (ambiguous)
+      - a duplicate name within the same invocation
+    """
+    deployments: List[str] = []
+    locals_: List[str] = []
+    seen: set = set()
+    for name in names:
+        if name in seen:
+            raise click.UsageError(f"duplicate name in positional args: '{name}'")
+        seen.add(name)
+        deploy_dir = config_dir / name
+        local_dir = config_dir / "local" / name
+        deploy_exists = deploy_dir.is_dir()
+        local_exists = local_dir.is_dir()
+        if deploy_exists and local_exists:
+            raise click.UsageError(
+                f"name '{name}' is ambiguous: matches both a deployment "
+                f"({deploy_dir}) and a local ({local_dir}). "
+                f"Use -d/--deploy or -l/--local to disambiguate."
+            )
+        if deploy_exists:
+            deployments.append(name)
+        elif local_exists:
+            locals_.append(name)
+        else:
+            raise click.UsageError(
+                f"unknown deployment or local: '{name}' "
+                f"(no {deploy_dir} or {local_dir} exists)"
+            )
+    return deployments, locals_
+
+
+def _classify_save_args(
+    names: Tuple[str, ...],
+) -> Tuple[Optional[str], Optional[str]]:
+    """Lenient positional classifier for ``dotconfig save``.
+
+    Save accepts up to two names: the first is the destination
+    deployment, the optional second is the destination local. Names need
+    not exist yet (save typically materializes a new directory).
+
+    Returns ``(deploy_name_or_None, local_name_or_None)``.
+
+    Raises ``click.UsageError`` for >2 names or duplicates.
+    """
+    if len(names) > 2:
+        raise click.UsageError(
+            "save accepts at most two positional names: <deploy> [<local>]"
+        )
+    if len(names) == 2 and names[0] == names[1]:
+        raise click.UsageError(f"duplicate name in positional args: '{names[0]}'")
+    deploy = names[0] if len(names) >= 1 else None
+    local = names[1] if len(names) >= 2 else None
+    return deploy, local
 
 
 @click.group()
@@ -94,13 +163,15 @@ def init(config_dir: str, quiet: bool) -> None:
 
 
 @cli.command()
+@click.argument("names", nargs=-1)
 @click.option(
     "-d", "--deploy",
     required=False,
     default=None,
     is_flag=False,
     flag_value=".",
-    help="Deployment / environment name (e.g. dev, prod, staging).",
+    help="Deployment / environment name (e.g. dev, prod, staging). "
+         "Legacy single-value alias for the positional form.",
 )
 @click.option(
     "-l", "--local",
@@ -108,7 +179,8 @@ def init(config_dir: str, quiet: bool) -> None:
     default=None,
     is_flag=False,
     flag_value=".",
-    help="Local / developer name for personal overrides.",
+    help="Local / developer name for personal overrides. "
+         "Legacy single-value alias for the positional form.",
 )
 @click.option(
     "-c", "--config-dir",
@@ -162,6 +234,7 @@ def init(config_dir: str, quiet: bool) -> None:
     help="Write public and secret values to separate files (.env + .env.secret).",
 )
 def load(
+    names: Tuple[str, ...],
     deploy: str,
     local: str,
     config_dir: str,
@@ -176,8 +249,13 @@ def load(
     """Assemble config files into .env, or load a specific file.
 
     \b
-    Requires -d/--deploy to select the deployment (e.g. dev, prod).
-    Optionally add -l/--local for developer-specific overrides.
+    Pass deployment and local-override names as positional arguments;
+    each name is classified by which directory exists under config/.
+    Multiple names of the same type stack last-write-wins (within type;
+    order across types is irrelevant).
+    The legacy -d/--deploy and -l/--local flags remain as single-value
+    aliases for back-compat. Mixing positional names with the flags
+    raises a usage error.
 
     Use --file to retrieve a single file from the config directory
     instead of assembling a full .env (specify -d or -l, not both).
@@ -186,7 +264,8 @@ def load(
 
     Use --json or --yaml to output as a structured file with deployment
     sections and public/secrets sub-keys.  Use -F/--flat to merge all
-    layers into a single flat dict (last-write-wins).
+    layers into a single flat dict (last-write-wins). Multi-layer
+    stacks are not supported with --json/--yaml in this release.
 
     Use --split to write public values to the main file and secret
     values to a companion .secret file (e.g. .env + .env.secret).
@@ -194,7 +273,9 @@ def load(
     Example:
 
     \b
-        dotconfig load -d dev -l yourname
+        dotconfig load dev yourname        # positional shorthand
+        dotconfig load dev prod alice bob  # stacked deploys + locals
+        dotconfig load -d dev -l yourname  # legacy flag form
         dotconfig load -d prod
         dotconfig load -d dev --json
         dotconfig load -d dev -l alice --yaml --flat
@@ -212,9 +293,40 @@ def load(
     if split and filename:
         raise click.UsageError("--split cannot be used with --file")
 
-    fmt = "json" if use_json else ("yaml" if use_yaml else "env")
-
     cfg = Path(config_dir)
+
+    # ---- Resolve positional names vs legacy -d/-l flags ----
+    if names and (deploy or local):
+        raise click.UsageError(
+            "cannot mix positional names with -d/--deploy or -l/--local; "
+            "use one form or the other"
+        )
+
+    if names:
+        if filename:
+            # --file takes a single deployment OR a single local;
+            # the lenient classifier preserves that one-or-the-other shape.
+            file_deploy, file_local = _classify_save_args(names)
+            # Verify that the names actually exist for load_file
+            if file_deploy and not (cfg / file_deploy).is_dir():
+                # Maybe it's actually a local
+                if (cfg / "local" / file_deploy).is_dir():
+                    file_deploy, file_local = None, file_deploy
+            deploys: List[str] = [file_deploy] if file_deploy else []
+            locals_: List[str] = [file_local] if file_local else []
+        else:
+            deploys, locals_ = _classify_load_args(names, cfg)
+    else:
+        deploys = [deploy] if deploy else []
+        locals_ = [local] if local else []
+
+    if (use_json or use_yaml) and (len(deploys) > 1 or len(locals_) > 1):
+        raise click.UsageError(
+            "--json/--yaml only support a single deployment and a single local "
+            "in this release (multi-layer stacks coming in a future sprint)"
+        )
+
+    fmt = "json" if use_json else ("yaml" if use_yaml else "env")
 
     # Resolve -o flag: None = config/files/ (default), "." = CWD, else explicit path
     if output == ".":
@@ -234,19 +346,22 @@ def load(
             raise click.UsageError("--json/--yaml cannot be used with --file")
         file_path = Path(filename).expanduser()
         load_file(
-            deployment=deploy,
-            local=local,
+            deployment=deploys[0] if deploys else None,
+            local=locals_[0] if locals_ else None,
             filename=file_path.name,
             config_dir=cfg,
             output=out,
             to_stdout=to_stdout,
         )
     else:
-        if not deploy:
-            raise click.UsageError("-d/--deploy is required when assembling .env")
+        if not deploys:
+            raise click.UsageError(
+                "at least one deployment is required when assembling .env "
+                "(pass it as a positional name or via -d/--deploy)"
+            )
         load_config(
-            deployment=deploy,
-            local=local,
+            deployment=deploys,
+            local=locals_,
             config_dir=cfg,
             output=out,
             to_stdout=to_stdout,
@@ -257,13 +372,15 @@ def load(
 
 
 @cli.command()
+@click.argument("names", nargs=-1)
 @click.option(
     "-d", "--deploy",
     required=False,
     default=None,
     is_flag=False,
     flag_value=".",
-    help="Target deployment name (overrides the .env metadata).",
+    help="Target deployment name (overrides the .env metadata). "
+         "Legacy single-value alias for the positional form.",
 )
 @click.option(
     "-l", "--local",
@@ -271,7 +388,8 @@ def load(
     default=None,
     is_flag=False,
     flag_value=".",
-    help="Target local / developer name (overrides the .env metadata).",
+    help="Target local / developer name (overrides the .env metadata). "
+         "Legacy single-value alias for the positional form.",
 )
 @click.option(
     "--env-file",
@@ -318,6 +436,7 @@ def load(
     help="Input is a flat dict (requires --json or --yaml; can only update existing keys).",
 )
 def save(
+    names: Tuple[str, ...],
     deploy: str,
     local: str,
     env_file: str,
@@ -331,11 +450,16 @@ def save(
     """Save .env sections back to config/ source files, or store a file.
 
     \b
-    Without --file: reads CONFIG_DEPLOY and CONFIG_LOCAL from the .env
-    metadata, then writes each section back to its corresponding source
-    file, re-encrypting secrets with SOPS.  Optionally provide
-    -d/--deploy and -l/--local to redirect the output to a different
-    deployment or user.
+    Without --file: reads layer metadata from the .env header, then
+    writes each section back to its corresponding source file,
+    re-encrypting secrets with SOPS.
+
+    Pass up to two positional names to redirect the output:
+      dotconfig save <deploy>          # flatten to config/<deploy>/
+      dotconfig save <deploy> <local>  # flatten to deploy + local
+    Multi-layer .env files are merged last-wins into the destination.
+    The legacy -d/--deploy and -l/--local flags remain as single-value
+    aliases. Mixing positional names with the flags raises a usage error.
 
     Use --json or --yaml to read from a structured file (.env.json or
     .env.yaml) instead of .env.  Use -F/--flat when the input is a flat
@@ -349,8 +473,10 @@ def save(
     Example:
 
     \b
-        dotconfig save
-        dotconfig save -d dev -l stan
+        dotconfig save                     # round-trip to loaded layers
+        dotconfig save dev                 # flatten to config/dev/
+        dotconfig save dev stan            # flatten to dev + stan
+        dotconfig save -d dev -l stan      # legacy flag form
         dotconfig save --json
         dotconfig save --yaml -d dev -l alice --flat
         dotconfig save --file app.yaml -d dev
@@ -366,6 +492,18 @@ def save(
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
+
+    # ---- Resolve positional names vs legacy -d/-l flags ----
+    if names and (deploy or local):
+        raise click.UsageError(
+            "cannot mix positional names with -d/--deploy or -l/--local; "
+            "use one form or the other"
+        )
+
+    if names:
+        pos_deploy, pos_local = _classify_save_args(names)
+        deploy = pos_deploy
+        local = pos_local
 
     # Determine the format and default input file
     fmt = "env"

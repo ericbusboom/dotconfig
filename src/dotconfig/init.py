@@ -300,11 +300,14 @@ an environment configuration cascade manager for `.env` files.
 dotconfig init
 
 # Load config into .env (assembles layers into a single file)
-dotconfig load -d dev -l yourname   # dev deployment + local overrides
-dotconfig load -d prod              # prod only, no local overrides
+dotconfig load dev yourname         # dev deployment + local overrides
+dotconfig load prod                 # prod only, no local overrides
+dotconfig load dev prod alice bob   # stacked deploys + locals
+dotconfig load -d dev -l yourname   # legacy flag form (still supported)
 
 # Save .env edits back to source files
-dotconfig save
+dotconfig save                      # round-trip to whatever was loaded
+dotconfig save dev                  # flatten the assembly into config/dev/
 
 # Load/save a specific file
 dotconfig load -d dev --file app.yaml --stdout

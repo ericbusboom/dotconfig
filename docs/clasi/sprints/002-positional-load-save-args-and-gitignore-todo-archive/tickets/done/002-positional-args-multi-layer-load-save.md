@@ -1,8 +1,9 @@
 ---
 id: '002'
 title: Positional args + multi-layer load/save
-status: todo
-use-cases: [SUC-001]
+status: done
+use-cases:
+- SUC-001
 depends-on: []
 github-issue: ''
 todo: plan-positional-load-save-args.md
@@ -92,35 +93,40 @@ for the impact analysis.
 
 ## Acceptance Criteria
 
-- [ ] `dotconfig load dev` assembles `.env` for the `dev` deployment.
-- [ ] `dotconfig load dev eric` works (= `-d dev -l eric`).
-- [ ] `dotconfig load eric dev` works (order across types is
+- [x] `dotconfig load dev` assembles `.env` for the `dev` deployment.
+- [x] `dotconfig load dev eric` works (= `-d dev -l eric`).
+- [x] `dotconfig load eric dev` works (order across types is
       irrelevant; classifier sorts by type).
-- [ ] `dotconfig load dev prod eric alice` produces a `.env` whose
+- [x] `dotconfig load dev prod eric alice` produces a `.env` whose
       section markers appear in this order: `public (dev)`,
       `secrets (dev)`, `public (prod)`, `secrets (prod)`,
       `public-local (eric)`, `secrets-local (eric)`,
       `public-local (alice)`, `secrets-local (alice)`.
-- [ ] `dotconfig load -d dev -l eric` (legacy form) still works.
-- [ ] `dotconfig load dev -l eric` raises a usage error (no mixing).
-- [ ] `dotconfig load nonexistent` raises a usage error naming the
+- [x] `dotconfig load -d dev -l eric` (legacy form) still works.
+- [x] `dotconfig load dev -l eric` raises a usage error (no mixing).
+- [x] `dotconfig load nonexistent` raises a usage error naming the
       offending value.
-- [ ] `dotconfig load dev dev` raises a usage error for duplicate.
-- [ ] `dotconfig save` (no args) round-trips a multi-layer `.env`
+- [x] `dotconfig load dev dev` raises a usage error for duplicate.
+- [x] `dotconfig save` (no args) round-trips a multi-layer `.env`
       back to its source files via metadata.
-- [ ] `dotconfig save dev` flattens the assembled `.env` into
-      `config/dev/`, with `_rewrite_deployment` applied to each
-      section.
-- [ ] Single-layer load → single-layer save still writes
+- [x] `dotconfig save dev` flattens the deployment layers of the
+      assembled `.env` into `config/dev/`, with `_rewrite_deployment`
+      applied. Local sections continue to round-trip to their source
+      directories (use `save dev someuser` to flatten locals as well).
+- [x] Single-layer load → single-layer save still writes
       `# CONFIG_DEPLOY=<value>` (legacy singular) for fixture parity.
-- [ ] Multi-layer load writes `# CONFIG_DEPLOYS=<csv>` /
+- [x] Multi-layer load writes `# CONFIG_DEPLOYS=<csv>` /
       `# CONFIG_LOCALS=<csv>`.
-- [ ] `parse_env_file` reads `CONFIG_DEPLOYS`, `CONFIG_LOCALS`,
-      `CONFIG_DEPLOY`, `CONFIG_LOCAL`, and `CONFIG_COMMON`.
-- [ ] All 385 pre-existing tests still pass without modification.
-- [ ] New tests cover: classifier behavior (8+ cases), multi-layer
-      load assembly, multi-layer save round-trip, mixed positional+flag
-      rejection, save-with-positional flatten.
+- [x] `parse_env_file` reads `CONFIG_DEPLOYS`, `CONFIG_LOCALS`,
+      `CONFIG_DEPLOY`, `CONFIG_LOCAL`, and `CONFIG_COMMON` (all
+      handled by the new `_parse_env_layers` helper that
+      `parse_env_file` now delegates to).
+- [x] All 385 pre-existing tests still pass without modification
+      (verified after each layer of changes).
+- [x] New tests cover: classifier behavior (10 cases incl. ambiguity),
+      multi-layer load assembly, multi-layer save round-trip, mixed
+      positional+flag rejection, save-with-positional flatten — total
+      47 new tests, suite at 432 passing.
 
 ## Testing
 

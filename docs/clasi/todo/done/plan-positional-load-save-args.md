@@ -1,8 +1,8 @@
 ---
-status: in-progress
+status: done
 sprint: '002'
 tickets:
-- 002-002
+- '002'
 ---
 
 # Plan: positional args for `dotconfig load` and `dotconfig save`

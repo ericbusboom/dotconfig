@@ -335,42 +335,51 @@ def _encrypt_sops(
         return False
 
 
-def parse_env_file(
+def _parse_env_layers(
     content: str,
-) -> Tuple[Optional[str], Optional[str], Dict[str, str]]:
-    """Parse a dotconfig-generated .env file.
+) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """Parse a dotconfig-generated .env into multi-layer metadata + sections.
 
-    Extracts:
-      - CONFIG_DEPLOY (or legacy CONFIG_COMMON) metadata value
-      - CONFIG_LOCAL metadata value (may be None)
-      - A dict mapping section labels to their variable content
+    Recognised metadata keys (in priority order — first match wins per type):
 
-    Section labels are the strings after ``#@dotconfig:`` markers,
-    e.g. ``"public (dev)"``, ``"secrets (dev)"``, ``"public-local (alice)"``.
+      - ``# CONFIG_DEPLOYS=<csv>``   → list of deployments (new, multi-layer)
+      - ``# CONFIG_DEPLOY=<value>``  → single deployment (legacy)
+      - ``# CONFIG_COMMON=<value>``  → single deployment (very-legacy alias)
+      - ``# CONFIG_LOCALS=<csv>``    → list of locals (new, multi-layer)
+      - ``# CONFIG_LOCAL=<value>``   → single local (legacy)
 
-    Also recognises the legacy ``# --- label ---`` format for backward
-    compatibility.
+    Returns ``(deployments, locals, sections)`` where the lists are empty
+    when no metadata is present.
     """
-    deployment: Optional[str] = None
-    local_name: Optional[str] = None
+    deployments: Optional[List[str]] = None
+    locals_: Optional[List[str]] = None
     sections: Dict[str, str] = {}
     current_section: Optional[str] = None
-    current_lines = []
+    current_lines: List[str] = []
 
     for line in content.splitlines():
-        # New metadata key
-        if line.startswith("# CONFIG_DEPLOY="):
-            deployment = line.split("=", 1)[1].strip()
+        # ---- Metadata keys (deployments) ----
+        if line.startswith("# CONFIG_DEPLOYS="):
+            csv = line.split("=", 1)[1].strip()
+            deployments = [v.strip() for v in csv.split(",") if v.strip()]
             continue
-        # Legacy metadata key
-        if line.startswith("# CONFIG_COMMON="):
-            deployment = line.split("=", 1)[1].strip()
+        if line.startswith("# CONFIG_DEPLOY=") and deployments is None:
+            deployments = [line.split("=", 1)[1].strip()]
             continue
-        if line.startswith("# CONFIG_LOCAL="):
-            local_name = line.split("=", 1)[1].strip()
+        if line.startswith("# CONFIG_COMMON=") and deployments is None:
+            deployments = [line.split("=", 1)[1].strip()]
             continue
 
-        # New marker format: #@dotconfig: <label>
+        # ---- Metadata keys (locals) ----
+        if line.startswith("# CONFIG_LOCALS="):
+            csv = line.split("=", 1)[1].strip()
+            locals_ = [v.strip() for v in csv.split(",") if v.strip()]
+            continue
+        if line.startswith("# CONFIG_LOCAL=") and locals_ is None:
+            locals_ = [line.split("=", 1)[1].strip()]
+            continue
+
+        # ---- Section markers ----
         if line.startswith("#@dotconfig: "):
             if current_section is not None:
                 sections[current_section] = "\n".join(current_lines).strip()
@@ -388,6 +397,29 @@ def parse_env_file(
     if current_section is not None:
         sections[current_section] = "\n".join(current_lines).strip()
 
+    return deployments or [], locals_ or [], sections
+
+
+def parse_env_file(
+    content: str,
+) -> Tuple[Optional[str], Optional[str], Dict[str, str]]:
+    """Parse a dotconfig-generated .env file (back-compat single-layer view).
+
+    Extracts:
+      - The first deployment from ``CONFIG_DEPLOYS`` / ``CONFIG_DEPLOY`` /
+        legacy ``CONFIG_COMMON`` (whichever is present)
+      - The first local from ``CONFIG_LOCALS`` / ``CONFIG_LOCAL``
+      - A dict mapping section labels to their variable content
+
+    Section labels are the strings after ``#@dotconfig:`` markers,
+    e.g. ``"public (dev)"``, ``"secrets (dev)"``, ``"public-local (alice)"``.
+
+    Also recognises the legacy ``# --- label ---`` format for backward
+    compatibility.
+    """
+    deployments, locals_, sections = _parse_env_layers(content)
+    deployment = deployments[0] if deployments else None
+    local_name = locals_[0] if locals_ else None
     return deployment, local_name, sections
 
 
@@ -733,36 +765,86 @@ def _save_config_structured(
         warn("Nothing saved.")
 
 
+def _to_layer_list(value) -> list:
+    """Normalize a deployment/local arg into an ordered list of names.
+
+    Mirrors ``dotconfig.load._to_layer_list`` so callers can pass either
+    a string (legacy single-value form), a list (new multi-layer form),
+    or ``None`` (no value).
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+def _merge_section_bodies(bodies: list) -> str:
+    """Merge multiple ``KEY=VAL`` section bodies in last-wins order.
+
+    Single-source bodies (or one non-empty among many) pass through
+    verbatim, preserving comments and ordering.  When multiple non-empty
+    bodies are present, they are parsed to dicts and merged last-wins,
+    losing comments — this is acceptable because multi-layer flatten is
+    an explicit user request (``save <name>`` against a stacked load).
+    """
+    nonempty = [b for b in bodies if b]
+    if not nonempty:
+        return ""
+    if len(nonempty) == 1:
+        return nonempty[0]
+    merged: Dict[str, str] = {}
+    for body in nonempty:
+        merged.update(_env_lines_to_dict(body))
+    return "\n".join(f"{k}={v}" for k, v in merged.items())
+
+
 def save_config(
     env_file: Path,
     config_dir: Path,
-    override_deploy: Optional[str] = None,
-    override_local: Optional[str] = None,
+    override_deploy=None,
+    override_local=None,
     fmt: str = "env",
     flat: bool = False,
 ) -> None:
     """Save .env sections back to the config/ source files.
 
-    Reads CONFIG_DEPLOY (or legacy CONFIG_COMMON) and CONFIG_LOCAL from
-    the .env metadata comments, then writes each section to its
-    corresponding file:
+    Reads layer metadata from the .env header (``CONFIG_DEPLOYS`` /
+    ``CONFIG_LOCALS`` for stacked loads, or legacy ``CONFIG_DEPLOY`` /
+    ``CONFIG_LOCAL`` / ``CONFIG_COMMON`` singletons), then writes each
+    section back to its source file:
 
-      - public ({deployment})         -> config/{save_deploy}/public.env
-      - secrets ({deployment})        -> config/{save_deploy}/secrets.env  (SOPS-encrypted)
-      - public-local ({local})        -> config/local/{save_local}/public.env
-      - secrets-local ({local})       -> config/local/{save_local}/secrets.env (SOPS-encrypted)
+      - public ({deployment})         -> config/{deployment}/public.env
+      - secrets ({deployment})        -> config/{deployment}/secrets.env  (SOPS-encrypted)
+      - public-local ({local})        -> config/local/{local}/public.env
+      - secrets-local ({local})       -> config/local/{local}/secrets.env (SOPS-encrypted)
 
-    If *override_deploy* is given it is used as the destination deployment
-    (i.e. the files that are written to) instead of CONFIG_DEPLOY.  Likewise
-    *override_local* overrides CONFIG_LOCAL for the destination local name.
-    This allows saving a loaded .env to a *different* deployment or user,
-    e.g. loading ``-d prod -l eric`` and saving as ``-d dev -l stan``.
+    *override_deploy* and *override_local* may be strings (single dest),
+    lists of length 0 or 1, or ``None``.  When supplied, the override is
+    a single destination name into which all matching source layers are
+    flattened (last-wins merge for multi-layer .env files; pass-through
+    for single-layer .env files, preserving comments).  More than one
+    override of either type is rejected.
+
+    When the override deploy differs from the loaded layers, the inline
+    ``DEPLOYMENT=`` variable in every section body is rewritten to the
+    new target — matching the historical single-layer override behavior.
 
     If SOPS_AGE_KEY_FILE is found inside the .env, it is added to the
     current process environment before invoking sops.
     """
     if not env_file.exists():
         error(f"{env_file} does not exist")
+        sys.exit(1)
+
+    override_deploys = _to_layer_list(override_deploy)
+    override_locals = _to_layer_list(override_local)
+
+    if len(override_deploys) > 1:
+        error("save accepts at most one destination deployment name")
+        sys.exit(1)
+    if len(override_locals) > 1:
+        error("save accepts at most one destination local name")
         sys.exit(1)
 
     # Auto-detect format from file extension when not explicitly set
@@ -775,7 +857,12 @@ def save_config(
 
     if fmt != "env":
         _save_config_structured(
-            env_file, config_dir, override_deploy, override_local, fmt, flat
+            env_file,
+            config_dir,
+            override_deploys[0] if override_deploys else None,
+            override_locals[0] if override_locals else None,
+            fmt,
+            flat,
         )
         return
 
@@ -789,42 +876,38 @@ def save_config(
             os.environ.setdefault("SOPS_AGE_KEY_FILE", key_file)
             break
 
-    deployment, local_name, sections = parse_env_file(content)
+    deployments, locals_, sections = _parse_env_layers(content)
 
-    if not deployment:
+    if not deployments:
         error("CONFIG_DEPLOY not found in .env — is this a dotconfig-managed file?")
         sys.exit(1)
 
-    # Determine destination names: overrides take precedence over metadata.
-    save_deploy = override_deploy if override_deploy is not None else deployment
-    save_local = override_local if override_local is not None else local_name
-
-    saved = []
-
-    # When saving to a different deployment, rewrite the DEPLOYMENT variable
-    # so it reflects the target environment, not the one that was loaded.
-    if save_deploy != deployment:
+    # Apply DEPLOYMENT= rewrite when the override changes the destination.
+    # Matches historical single-layer behavior (rewrites every section,
+    # including local ones) — extends naturally to multi-layer flatten.
+    if override_deploys and deployments != [override_deploys[0]]:
+        target = override_deploys[0]
         for key in sections:
-            sections[key] = _rewrite_deployment(sections[key], save_deploy)
+            sections[key] = _rewrite_deployment(sections[key], target)
 
-    # Locate the sops config file so it can be passed explicitly to sops.
-    # sops.yaml is a non-dotfile and is not auto-discovered by sops, so we
-    # must pass --config when invoking sops.
     sops_config = config_dir / "sops.yaml"
+    saved: list = []
 
-    # --- Public (deployment) ---
-    public_key = f"public ({deployment})"
-    if public_key in sections:
-        public_file = config_dir / save_deploy / "public.env"
-        public_file.parent.mkdir(parents=True, exist_ok=True)
-        body = sections[public_key]
-        public_file.write_text(body + "\n" if body else "")
-        saved.append(("public config", str(public_file)))
-
-    # --- Secrets (deployment) ---
-    secrets_key = f"secrets ({deployment})"
-    if secrets_key in sections:
-        secrets_body = sections[secrets_key]
+    # ---- Deployment sections ----
+    if override_deploys:
+        save_deploy = override_deploys[0]
+        public_body = _merge_section_bodies(
+            [sections.get(f"public ({d})", "") for d in deployments]
+        )
+        secrets_body = _merge_section_bodies(
+            [sections.get(f"secrets ({d})", "") for d in deployments]
+        )
+        any_public = any(f"public ({d})" in sections for d in deployments)
+        if any_public:
+            public_file = config_dir / save_deploy / "public.env"
+            public_file.parent.mkdir(parents=True, exist_ok=True)
+            public_file.write_text(public_body + "\n" if public_body else "")
+            saved.append(("public config", str(public_file)))
         if secrets_body:
             secrets_file = config_dir / save_deploy / "secrets.env"
             secrets_file.parent.mkdir(parents=True, exist_ok=True)
@@ -832,30 +915,74 @@ def save_config(
                 saved.append(("secrets 🔒", str(secrets_file)))
             else:
                 warn(f"could not encrypt secrets for {save_deploy}")
+    else:
+        for d in deployments:
+            public_key = f"public ({d})"
+            if public_key in sections:
+                public_file = config_dir / d / "public.env"
+                public_file.parent.mkdir(parents=True, exist_ok=True)
+                body = sections[public_key]
+                public_file.write_text(body + "\n" if body else "")
+                saved.append(("public config", str(public_file)))
+            secrets_key = f"secrets ({d})"
+            if secrets_key in sections:
+                body = sections[secrets_key]
+                if body:
+                    secrets_file = config_dir / d / "secrets.env"
+                    secrets_file.parent.mkdir(parents=True, exist_ok=True)
+                    if _encrypt_sops(body + "\n", secrets_file, sops_config):
+                        saved.append(("secrets 🔒", str(secrets_file)))
+                    else:
+                        warn(f"could not encrypt secrets for {d}")
 
-    if local_name:
-        # --- Public-local ---
-        local_key = f"public-local ({local_name})"
-        if local_key in sections:
-            local_body = sections[local_key]
-            local_file = config_dir / "local" / save_local / "public.env"
-            local_file.parent.mkdir(parents=True, exist_ok=True)
-            local_file.write_text(local_body + "\n" if local_body else "")
-            saved.append(("public-local config", str(local_file)))
-
-        # --- Secrets-local ---
-        secrets_local_key = f"secrets-local ({local_name})"
-        if secrets_local_key in sections:
-            secrets_local_body = sections[secrets_local_key]
-            if secrets_local_body:
+    # ---- Local sections ----
+    if locals_:
+        if override_locals:
+            save_local = override_locals[0]
+            public_body = _merge_section_bodies(
+                [sections.get(f"public-local ({l})", "") for l in locals_]
+            )
+            secrets_body = _merge_section_bodies(
+                [sections.get(f"secrets-local ({l})", "") for l in locals_]
+            )
+            any_public = any(
+                f"public-local ({l})" in sections for l in locals_
+            )
+            if any_public:
+                local_file = config_dir / "local" / save_local / "public.env"
+                local_file.parent.mkdir(parents=True, exist_ok=True)
+                local_file.write_text(public_body + "\n" if public_body else "")
+                saved.append(("public-local config", str(local_file)))
+            if secrets_body:
                 secrets_local_file = (
                     config_dir / "local" / save_local / "secrets.env"
                 )
                 secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
-                if _encrypt_sops(secrets_local_body + "\n", secrets_local_file, sops_config):
+                if _encrypt_sops(secrets_body + "\n", secrets_local_file, sops_config):
                     saved.append(("secrets-local 🔒", str(secrets_local_file)))
                 else:
                     warn(f"could not encrypt local secrets for {save_local}")
+        else:
+            for l in locals_:
+                local_key = f"public-local ({l})"
+                if local_key in sections:
+                    body = sections[local_key]
+                    local_file = config_dir / "local" / l / "public.env"
+                    local_file.parent.mkdir(parents=True, exist_ok=True)
+                    local_file.write_text(body + "\n" if body else "")
+                    saved.append(("public-local config", str(local_file)))
+                secrets_local_key = f"secrets-local ({l})"
+                if secrets_local_key in sections:
+                    body = sections[secrets_local_key]
+                    if body:
+                        secrets_local_file = (
+                            config_dir / "local" / l / "secrets.env"
+                        )
+                        secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
+                        if _encrypt_sops(body + "\n", secrets_local_file, sops_config):
+                            saved.append(("secrets-local 🔒", str(secrets_local_file)))
+                        else:
+                            warn(f"could not encrypt local secrets for {l}")
 
     if saved:
         heading("💾 Saved:")
