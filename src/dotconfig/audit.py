@@ -11,8 +11,9 @@ Uses two detection strategies:
 """
 
 import re
+import subprocess
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Set
 
 from .output import error, heading, info, ok, warn
 
@@ -153,18 +154,67 @@ _ENV_SUFFIXES = {".env"}
 _SKIP_NAMES = {"sops.yaml", "AGENTS.md"}
 
 
+def _gitignored_paths(paths: List[Path], cwd: Path) -> Set[Path]:
+    """Return the subset of *paths* that are git-ignored according to *cwd*'s repo.
+
+    Uses ``git check-ignore --stdin`` so a single subprocess call covers all
+    candidate paths. Returns an empty set when *cwd* is not inside a git
+    working tree, when ``git`` is not installed, or when no paths are ignored
+    — in all of those cases the audit falls back to scanning everything.
+
+    Honors every gitignore source git itself respects: per-directory
+    ``.gitignore`` files, the repo's ``.git/info/exclude``, and the user's
+    ``core.excludesfile`` (typically ``~/.config/git/ignore``).
+    """
+    if not paths:
+        return set()
+    # Absolutize paths so git check-ignore can resolve them regardless of
+    # cwd, and so the lookup result map back to the exact Path objects the
+    # caller passed in.
+    abs_to_orig = {p.resolve(): p for p in paths}
+    try:
+        result = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-z"],
+            input="\0".join(str(p) for p in abs_to_orig),
+            capture_output=True,
+            text=True,
+            cwd=str(cwd.resolve()),
+        )
+    except FileNotFoundError:
+        return set()
+    # `git check-ignore` exits 0 when at least one path is ignored, 1 when
+    # none are ignored, 128 when not inside a git repo. Anything else means
+    # something went wrong; treat as "no info, scan everything".
+    if result.returncode not in (0, 1):
+        return set()
+    if not result.stdout:
+        return set()
+    ignored: Set[Path] = set()
+    for line in result.stdout.split("\0"):
+        if not line:
+            continue
+        resolved = Path(line).resolve()
+        orig = abs_to_orig.get(resolved)
+        if orig is not None:
+            ignored.add(orig)
+    return ignored
+
+
 def audit_config_dir(config_dir: Path) -> List[Finding]:
     """Walk *config_dir* and return all audit findings.
 
     Scans .env files with key-name heuristics and structured files
     (YAML, JSON) with detect-secrets.  Skips files that are already
-    SOPS-encrypted at the whole-file level.
+    SOPS-encrypted at the whole-file level, and any file that git
+    considers ignored (so e.g. the auto-generated ``config/files/``
+    decrypted-output directory does not produce false positives).
     """
     findings: List[Finding] = []
 
     if not config_dir.is_dir():
         return findings
 
+    candidates: List[Path] = []
     for path in sorted(config_dir.rglob("*")):
         if not path.is_file():
             continue
@@ -172,7 +222,16 @@ def audit_config_dir(config_dir: Path) -> List[Finding]:
             continue
         if _is_sops_file(path):
             continue
+        suffix = path.suffix.lower()
+        if suffix not in _ENV_SUFFIXES and suffix not in _STRUCTURED_SUFFIXES:
+            continue
+        candidates.append(path)
 
+    ignored = _gitignored_paths(candidates, config_dir)
+
+    for path in candidates:
+        if path in ignored:
+            continue
         suffix = path.suffix.lower()
         if suffix in _ENV_SUFFIXES:
             findings.extend(_scan_env_file(path))

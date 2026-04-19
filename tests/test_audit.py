@@ -6,8 +6,11 @@ import pytest
 
 from click.testing import CliRunner
 
+import subprocess
+
 from dotconfig.audit import (
     Finding,
+    _gitignored_paths,
     _is_sops_file,
     _key_looks_secret,
     _scan_env_file,
@@ -220,3 +223,80 @@ class TestAuditCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["audit", "-c", str(tmp_path / "config")])
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# git-ignore filtering
+# ---------------------------------------------------------------------------
+
+def _git_init(repo_root: Path) -> None:
+    """Initialize a minimal git repo at *repo_root* (no signing, no hooks)."""
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"], cwd=str(repo_root), check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=str(repo_root), check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=str(repo_root), check=True
+    )
+    subprocess.run(
+        ["git", "config", "commit.gpgsign", "false"],
+        cwd=str(repo_root), check=True,
+    )
+
+
+class TestGitignoredPaths:
+    def test_returns_empty_when_no_git_repo(self, tmp_path):
+        # tmp_path is not (typically) inside a git repo
+        cfg = tmp_path / "config"
+        cfg.mkdir()
+        f = cfg / "x.env"
+        f.write_text("X=1")
+        # Use a known-non-repo cwd (tmp_path) so check-ignore returns 128.
+        # Even if pytest is run inside a git repo, tmp_path is outside it.
+        result = _gitignored_paths([f], cfg)
+        # No .gitignore exists, so nothing should be flagged
+        assert result == set()
+
+    def test_ignored_files_detected(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init(repo)
+        cfg = repo / "config"
+        cfg.mkdir()
+        # files/ is git-ignored
+        files_dir = cfg / "files"
+        files_dir.mkdir()
+        (cfg / ".gitignore").write_text("files/\n")
+        ignored_file = files_dir / "decrypted.json"
+        ignored_file.write_text('{"k":"v"}\n')
+        kept_file = cfg / "public.env"
+        kept_file.write_text("X=1\n")
+
+        result = _gitignored_paths([ignored_file, kept_file], cfg)
+        assert ignored_file in result
+        assert kept_file not in result
+
+
+class TestAuditSkipsGitignoredFiles:
+    def test_gitignored_file_with_secret_is_skipped(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _git_init(repo)
+        cfg = repo / "config"
+        (cfg / "files").mkdir(parents=True)
+        (cfg / ".gitignore").write_text("files/\n")
+        # Plant a clearly-secret value in an ignored file
+        (cfg / "files" / "creds.env").write_text("API_KEY=plaintext\n")
+        # And one in a tracked file (should still be flagged)
+        (cfg / "dev").mkdir()
+        (cfg / "dev" / "public.env").write_text("API_KEY=plaintext\n")
+
+        findings = audit_config_dir(cfg)
+        files_seen = {f.file.name for f in findings}
+        # creds.env is in config/files/ which is gitignored → not flagged
+        assert "creds.env" not in {f.file.name for f in findings if "files" in str(f.file)}
+        # The tracked dev/public.env should still be flagged
+        assert any(f.file.name == "public.env" for f in findings)
