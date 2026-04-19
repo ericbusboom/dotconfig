@@ -1,8 +1,9 @@
 ---
 id: '001'
 title: Archive gitignore TODO (verify-and-move)
-status: todo
-use-cases: [SUC-002]
+status: done
+use-cases:
+- SUC-002
 depends-on: []
 github-issue: ''
 todo: plan-init-creates-gitignore-for-env-files.md
@@ -27,16 +28,16 @@ sprint linkage. **No code changes.**
 
 ## Acceptance Criteria
 
-- [ ] Implementation in `src/dotconfig/init.py` matches all bullets of
+- [x] Implementation in `src/dotconfig/init.py` matches all bullets of
       the TODO's "Change" section (patterns present, append-only when
       `.gitignore` exists, idempotent when patterns already present,
       invoked from `init_config`).
-- [ ] `tests/test_init.py::TestUpdateGitignore` covers the create /
+- [x] `tests/test_init.py::TestUpdateGitignore` covers the create /
       append / no-op / quiet-mode paths and passes.
-- [ ] TODO file moved to `docs/clasi/todo/done/` via the
+- [x] TODO file moved to `docs/clasi/todo/done/` via the
       `move_todo_to_done` MCP tool with `sprint_id="002"` and
       `ticket_ids=["001"]`.
-- [ ] No code or test changes in this ticket.
+- [x] No code or test changes in this ticket.
 
 ## Testing
 

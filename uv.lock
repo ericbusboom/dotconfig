@@ -429,7 +429,7 @@ wheels = [
 ]
 
 [[package]]
-name = "edotconfig"
+name = "dotconfig"
 version = "0.20260411.1"
 source = { editable = "." }
 dependencies = [
