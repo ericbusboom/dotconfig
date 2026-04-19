@@ -298,44 +298,68 @@ def load_file(
         ok(f"Written to {dest}")
 
 
+def _to_layer_list(value) -> list:
+    """Normalize a deployment/local arg into an ordered list of names.
+
+    Accepts ``None`` (→ ``[]``), a string (→ ``[value]``), or any iterable
+    of strings (→ ``list(value)``). Used to keep ``load_config`` and
+    ``save_config`` back-compat for the historical
+    ``deployment="dev", local="alice"`` calling convention while supporting
+    multi-layer ``["dev", "prod"]`` callers from the CLI.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
 def _read_env_layers(
-    deployment: str,
-    local: Optional[str],
+    deployments: list,
+    locals_: list,
     config_dir: Path,
 ) -> tuple:
-    """Read the four .env layers and return their raw contents.
+    """Read all .env layers (deploy + local) and return them in layer order.
 
-    Returns ``(sops_config, public_text, secrets_text, local_public_text, local_secrets_text)``.
-    Missing layers return empty strings.
+    Returns ``(sops_config, deploy_layers, local_layers)`` where each layer
+    list contains tuples of ``(name, public_text, secrets_text)``.
+    Missing files contribute empty strings (with a warning for missing
+    locals — deployments are required and exit on missing).
     """
     sops_config = config_dir / "sops.yaml"
 
-    deploy_env = config_dir / deployment / "public.env"
-    if not deploy_env.exists():
-        error(f"deployment config file not found: {deploy_env}")
-        sys.exit(1)
+    deploy_layers: list = []
+    for deployment in deployments:
+        deploy_env = config_dir / deployment / "public.env"
+        if not deploy_env.exists():
+            error(f"deployment config file not found: {deploy_env}")
+            sys.exit(1)
+        public_text = deploy_env.read_text().strip()
 
-    public_text = deploy_env.read_text().strip()
+        secrets_text = ""
+        secrets_env = config_dir / deployment / "secrets.env"
+        if secrets_env.exists():
+            secrets_text = _read_file_content(secrets_env, sops_config).strip()
 
-    secrets_text = ""
-    secrets_env = config_dir / deployment / "secrets.env"
-    if secrets_env.exists():
-        secrets_text = _read_file_content(secrets_env, sops_config).strip()
+        deploy_layers.append((deployment, public_text, secrets_text))
 
-    local_public_text = ""
-    local_secrets_text = ""
-    if local:
+    local_layers: list = []
+    for local in locals_:
         local_env = config_dir / "local" / local / "public.env"
         if local_env.exists():
             local_public_text = local_env.read_text().strip()
         else:
             warn(f"local config file not found: {local_env} — public-local section will be empty")
+            local_public_text = ""
 
+        local_secrets_text = ""
         secrets_local = config_dir / "local" / local / "secrets.env"
         if secrets_local.exists():
             local_secrets_text = _read_file_content(secrets_local, sops_config).strip()
 
-    return sops_config, public_text, secrets_text, local_public_text, local_secrets_text
+        local_layers.append((local, local_public_text, local_secrets_text))
+
+    return sops_config, deploy_layers, local_layers
 
 
 def _split_path(dest: Path) -> Path:
@@ -353,8 +377,8 @@ def _split_path(dest: Path) -> Path:
 
 
 def load_config(
-    deployment: str,
-    local: Optional[str],
+    deployment,
+    local,
     config_dir: Path,
     output: Optional[Path],
     to_stdout: bool = False,
@@ -364,19 +388,30 @@ def load_config(
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
-    Reads from:
+    *deployment* and *local* may be strings (single layer, legacy form),
+    lists of strings (multi-layer stacks), or ``None`` / ``[]``.  Layers
+    are applied in order — within deployments first, then within locals,
+    last-write-wins.
+
+    Reads from, for each layer:
       - config/{deployment}/public.env            (public deployment config)
       - config/{deployment}/secrets.env           (SOPS-encrypted secrets)
       - config/local/{local}/public.env           (public local overrides, optional)
       - config/local/{local}/secrets.env          (encrypted local secrets, optional)
 
     When *fmt* is ``"env"`` (default), writes a .env with marked sections
-    that enable round-tripping via the save command.
+    that enable round-tripping via the save command.  Single-layer
+    invocations write the legacy ``# CONFIG_DEPLOY=`` / ``# CONFIG_LOCAL=``
+    metadata keys for byte-for-byte parity with previous releases;
+    multi-layer invocations write ``# CONFIG_DEPLOYS=<csv>`` /
+    ``# CONFIG_LOCALS=<csv>``.
 
     When *fmt* is ``"json"`` or ``"yaml"``, writes a structured file with
     top-level keys for each deployment/local name and ``public``/``secrets``
     sub-keys.  A ``_dotconfig`` metadata key records the deployment and
-    local names for round-tripping.
+    local names for round-tripping.  Multi-layer stacks with structured
+    output are not supported in this iteration; the CLI raises a usage
+    error before reaching this code.
 
     When *flat* is True (requires ``"json"`` or ``"yaml"``), all layers are
     merged into a single flat dict (last-write-wins).
@@ -390,9 +425,25 @@ def load_config(
     When *to_stdout* is True the assembled content is printed to stdout
     instead of being written to a file.
     """
-    _, public_text, secrets_text, local_public_text, local_secrets_text = (
-        _read_env_layers(deployment, local, config_dir)
-    )
+    deployments = _to_layer_list(deployment)
+    locals_ = _to_layer_list(local)
+
+    if not deployments:
+        error("at least one deployment is required")
+        sys.exit(1)
+
+    _, deploy_layers, local_layers = _read_env_layers(deployments, locals_, config_dir)
+
+    # ---- Single-layer view used by structured (json/yaml) and split paths.
+    # Both legacy code paths only handle one deployment + one local; the CLI
+    # raises a UsageError before reaching here when stacks are passed
+    # alongside --json/--yaml/--split.
+    public_text = deploy_layers[0][1] if deploy_layers else ""
+    secrets_text = deploy_layers[0][2] if deploy_layers else ""
+    local_public_text = local_layers[0][1] if local_layers else ""
+    local_secrets_text = local_layers[0][2] if local_layers else ""
+    deployment_first = deployments[0]
+    local_first = locals_[0] if locals_ else None
 
     if split:
         # ---- Split mode: public file + secret companion ----
@@ -422,21 +473,23 @@ def load_config(
         else:
             # .env format
             public_parts: list = []
-            public_parts.append(f"# CONFIG_DEPLOY={deployment}")
-            if local:
-                public_parts.append(f"# CONFIG_LOCAL={local}")
+            public_parts.extend(_build_metadata_header(deployments, locals_))
             public_parts.append("")
-            if public_text:
-                public_parts.append(public_text)
-            if local_public_text:
-                public_parts.append(local_public_text)
+            for _, p_text, _ in deploy_layers:
+                if p_text:
+                    public_parts.append(p_text)
+            for _, p_text, _ in local_layers:
+                if p_text:
+                    public_parts.append(p_text)
             public_assembled = "\n".join(public_parts) + "\n"
 
             secrets_parts: list = []
-            if secrets_text:
-                secrets_parts.append(secrets_text)
-            if local_secrets_text:
-                secrets_parts.append(local_secrets_text)
+            for _, _, s_text in deploy_layers:
+                if s_text:
+                    secrets_parts.append(s_text)
+            for _, _, s_text in local_layers:
+                if s_text:
+                    secrets_parts.append(s_text)
             secrets_assembled = "\n".join(secrets_parts) + "\n" if secrets_parts else ""
 
             default_output = Path(".env")
@@ -453,6 +506,7 @@ def load_config(
 
     elif fmt in ("json", "yaml"):
         # ---- Structured output ----
+        # Single-layer only — CLI rejects multi-layer + structured combo.
         public_dict = _env_lines_to_dict(public_text)
         secrets_dict = _env_lines_to_dict(secrets_text)
         local_public_dict = _env_lines_to_dict(local_public_text)
@@ -466,15 +520,15 @@ def load_config(
             result.update(local_secrets_dict)
         else:
             result = {
-                "_dotconfig": {"deploy": deployment},
-                deployment: {
+                "_dotconfig": {"deploy": deployment_first},
+                deployment_first: {
                     "public": public_dict,
                     "secrets": secrets_dict,
                 },
             }
-            if local:
-                result["_dotconfig"]["local"] = local
-                result[local] = {
+            if local_first:
+                result["_dotconfig"]["local"] = local_first
+                result[local_first] = {
                     "public": local_public_dict,
                     "secrets": local_secrets_dict,
                 }
@@ -494,33 +548,36 @@ def load_config(
             dest.write_text(assembled)
             ok(f"Written to {dest}")
     else:
-        # ---- Classic .env output ----
+        # ---- Classic .env output (multi-layer aware) ----
         parts: list = []
-
-        parts.append(f"# CONFIG_DEPLOY={deployment}")
-        if local:
-            parts.append(f"# CONFIG_LOCAL={local}")
+        parts.extend(_build_metadata_header(deployments, locals_))
         parts.append("")
 
-        parts.append(f"#@dotconfig: public ({deployment})")
-        if public_text:
-            parts.append(public_text)
-
-        parts.append("")
-        parts.append(f"#@dotconfig: secrets ({deployment})")
-        if secrets_text:
-            parts.append(secrets_text)
-
-        if local:
+        for d_name, p_text, s_text in deploy_layers:
+            parts.append(f"#@dotconfig: public ({d_name})")
+            if p_text:
+                parts.append(p_text)
             parts.append("")
-            parts.append(f"#@dotconfig: public-local ({local})")
-            if local_public_text:
-                parts.append(local_public_text)
-
+            parts.append(f"#@dotconfig: secrets ({d_name})")
+            if s_text:
+                parts.append(s_text)
             parts.append("")
-            parts.append(f"#@dotconfig: secrets-local ({local})")
-            if local_secrets_text:
-                parts.append(local_secrets_text)
+
+        for l_name, p_text, s_text in local_layers:
+            parts.append(f"#@dotconfig: public-local ({l_name})")
+            if p_text:
+                parts.append(p_text)
+            parts.append("")
+            parts.append(f"#@dotconfig: secrets-local ({l_name})")
+            if s_text:
+                parts.append(s_text)
+            parts.append("")
+
+        # The legacy single-layer writer ended without a trailing blank
+        # line block, so trim one trailing empty element to keep
+        # byte-for-byte parity with previous releases.
+        if parts and parts[-1] == "":
+            parts.pop()
 
         assembled = "\n".join(parts) + "\n"
         default_output = Path(".env")
@@ -532,3 +589,22 @@ def load_config(
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(assembled)
             ok(f"Written to {dest}")
+
+
+def _build_metadata_header(deployments: list, locals_: list) -> list:
+    """Build the ``# CONFIG_DEPLOY[S]=`` / ``# CONFIG_LOCAL[S]=`` header lines.
+
+    Single-layer cases use the legacy singular keys (preserves byte-for-byte
+    parity with previous releases for tests/fixtures); multi-layer cases use
+    the new comma-separated plural keys.
+    """
+    lines: list = []
+    if len(deployments) == 1:
+        lines.append(f"# CONFIG_DEPLOY={deployments[0]}")
+    elif len(deployments) > 1:
+        lines.append(f"# CONFIG_DEPLOYS={','.join(deployments)}")
+    if len(locals_) == 1:
+        lines.append(f"# CONFIG_LOCAL={locals_[0]}")
+    elif len(locals_) > 1:
+        lines.append(f"# CONFIG_LOCALS={','.join(locals_)}")
+    return lines

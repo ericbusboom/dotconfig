@@ -43,9 +43,8 @@ def _load_secrets_flat(
     config_dir: Path,
 ) -> Dict[str, str]:
     """Load all secrets for a deployment as a flat dict."""
-    _, public_text, secrets_text, _, _ = _read_env_layers(
-        deployment, None, config_dir,
-    )
+    _, deploy_layers, _ = _read_env_layers([deployment], [], config_dir)
+    _, public_text, secrets_text = deploy_layers[0]
     result: Dict[str, str] = {}
     result.update(_env_lines_to_dict(public_text))
     result.update(_env_lines_to_dict(secrets_text))

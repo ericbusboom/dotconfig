@@ -13,6 +13,7 @@ from dotconfig.save import (
     _dict_diff,
     _encrypt_sops,
     _is_leaf_secret,
+    _parse_env_layers,
     _split_env_secrets,
     _split_secrets,
     parse_env_file,
@@ -165,6 +166,219 @@ KEY=value
 """
         deploy, _, _ = parse_env_file(legacy)
         assert deploy == "prod"
+
+
+# ---------------------------------------------------------------------------
+# _parse_env_layers — multi-layer + legacy metadata
+# ---------------------------------------------------------------------------
+
+class TestParseEnvLayers:
+    def test_singular_keys_yield_singleton_lists(self):
+        deploys, locals_, _ = _parse_env_layers(SAMPLE_ENV_WITH_LOCAL)
+        assert deploys == ["dev"]
+        assert locals_ == ["alice"]
+
+    def test_plural_keys_yield_full_lists(self):
+        text = """\
+# CONFIG_DEPLOYS=dev,prod
+# CONFIG_LOCALS=alice,bob
+
+#@dotconfig: public (dev)
+A=1
+"""
+        deploys, locals_, _ = _parse_env_layers(text)
+        assert deploys == ["dev", "prod"]
+        assert locals_ == ["alice", "bob"]
+
+    def test_plural_keys_strip_whitespace(self):
+        text = "# CONFIG_DEPLOYS= dev , prod ,, \n# CONFIG_LOCALS=eric\n"
+        deploys, locals_, _ = _parse_env_layers(text)
+        assert deploys == ["dev", "prod"]
+        assert locals_ == ["eric"]
+
+    def test_plural_wins_over_singular(self):
+        text = "# CONFIG_DEPLOYS=dev,prod\n# CONFIG_DEPLOY=ignored\n"
+        deploys, _, _ = _parse_env_layers(text)
+        assert deploys == ["dev", "prod"]
+
+    def test_singular_first_then_plural_plural_wins(self):
+        text = "# CONFIG_DEPLOY=ignored\n# CONFIG_DEPLOYS=dev,prod\n"
+        deploys, _, _ = _parse_env_layers(text)
+        assert deploys == ["dev", "prod"]
+
+    def test_legacy_config_common_yields_singleton(self):
+        text = "# CONFIG_COMMON=prod\n\n#@dotconfig: public (prod)\nK=V\n"
+        deploys, _, _ = _parse_env_layers(text)
+        assert deploys == ["prod"]
+
+    def test_empty_returns_empty_lists(self):
+        deploys, locals_, sections = _parse_env_layers("")
+        assert deploys == []
+        assert locals_ == []
+        assert sections == {}
+
+
+# ---------------------------------------------------------------------------
+# save_config — multi-layer round-trip
+# ---------------------------------------------------------------------------
+
+SAMPLE_MULTI_LAYER_ENV = """\
+# CONFIG_DEPLOYS=dev,prod
+# CONFIG_LOCALS=alice,bob
+
+#@dotconfig: public (dev)
+APP_DEPLOY=dev
+PORT=3000
+
+#@dotconfig: secrets (dev)
+SECRET_DEV=s_dev
+
+#@dotconfig: public (prod)
+APP_DEPLOY=prod
+PORT=8080
+
+#@dotconfig: secrets (prod)
+SECRET_PROD=s_prod
+
+#@dotconfig: public-local (alice)
+USER_NAME=alice
+
+#@dotconfig: secrets-local (alice)
+
+#@dotconfig: public-local (bob)
+USER_NAME=bob
+
+#@dotconfig: secrets-local (bob)
+"""
+
+
+class TestSaveConfigMultiLayer:
+    def test_round_trip_writes_each_layer_to_its_own_file(
+        self, env_file, config_dir
+    ):
+        env_file.write_text(SAMPLE_MULTI_LAYER_ENV)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        assert (config_dir / "dev" / "public.env").exists()
+        assert (config_dir / "prod" / "public.env").exists()
+        assert (config_dir / "local" / "alice" / "public.env").exists()
+        assert (config_dir / "local" / "bob" / "public.env").exists()
+
+    def test_round_trip_preserves_per_layer_values(self, env_file, config_dir):
+        env_file.write_text(SAMPLE_MULTI_LAYER_ENV)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        assert "PORT=3000" in (config_dir / "dev" / "public.env").read_text()
+        assert "PORT=8080" in (config_dir / "prod" / "public.env").read_text()
+        assert "USER_NAME=alice" in (
+            config_dir / "local" / "alice" / "public.env"
+        ).read_text()
+        assert "USER_NAME=bob" in (
+            config_dir / "local" / "bob" / "public.env"
+        ).read_text()
+
+    def test_override_deploy_flattens_multi_layer(self, env_file, config_dir):
+        """save with a single override deploy flattens all layers into it."""
+        env_file.write_text(SAMPLE_MULTI_LAYER_ENV)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_deploy="staging")
+        # Original deploys do NOT receive their own files
+        assert not (config_dir / "dev").exists()
+        assert not (config_dir / "prod").exists()
+        # Staging gets the flattened result
+        merged = (config_dir / "staging" / "public.env").read_text()
+        # Last-wins: prod overrode dev
+        assert "APP_DEPLOY=prod" in merged
+        assert "PORT=8080" in merged
+
+    def test_override_deploy_accepts_list(self, env_file, config_dir):
+        """override_deploy=['staging'] is equivalent to override_deploy='staging'."""
+        env_file.write_text(SAMPLE_ENV_DEPLOY_ONLY)
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, override_deploy=["staging"])
+        assert (config_dir / "staging" / "public.env").exists()
+
+    def test_override_deploy_too_many_raises(self, env_file, config_dir):
+        env_file.write_text(SAMPLE_ENV_DEPLOY_ONLY)
+        with pytest.raises(SystemExit):
+            save_config(env_file, config_dir, override_deploy=["a", "b"])
+
+
+# ---------------------------------------------------------------------------
+# load_config — multi-layer assembly
+# ---------------------------------------------------------------------------
+
+class TestLoadConfigMultiLayer:
+    def test_multi_deploy_writes_plural_metadata_key(self, tmp_path):
+        from dotconfig.load import load_config
+
+        cfg = tmp_path / "config"
+        for d in ("dev", "prod"):
+            (cfg / d).mkdir(parents=True)
+            (cfg / d / "public.env").write_text(f"X_{d}=1\n")
+
+        out = tmp_path / ".env"
+        load_config(["dev", "prod"], None, cfg, out)
+        text = out.read_text()
+        assert "# CONFIG_DEPLOYS=dev,prod" in text
+        assert "# CONFIG_DEPLOY=" not in text
+
+    def test_single_deploy_keeps_singular_metadata_key(self, tmp_path):
+        """Byte-parity guarantee: single-layer .env writes the legacy key."""
+        from dotconfig.load import load_config
+
+        cfg = tmp_path / "config"
+        (cfg / "dev").mkdir(parents=True)
+        (cfg / "dev" / "public.env").write_text("X=1\n")
+
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        text = out.read_text()
+        assert "# CONFIG_DEPLOY=dev" in text
+        assert "# CONFIG_DEPLOYS=" not in text
+
+    def test_multi_local_writes_plural_metadata_key(self, tmp_path):
+        from dotconfig.load import load_config
+
+        cfg = tmp_path / "config"
+        (cfg / "dev").mkdir(parents=True)
+        (cfg / "dev" / "public.env").write_text("X=1\n")
+        for l in ("alice", "bob"):
+            (cfg / "local" / l).mkdir(parents=True)
+            (cfg / "local" / l / "public.env").write_text(f"U_{l}=1\n")
+
+        out = tmp_path / ".env"
+        load_config("dev", ["alice", "bob"], cfg, out)
+        text = out.read_text()
+        assert "# CONFIG_LOCALS=alice,bob" in text
+
+    def test_section_order_for_multi_layer(self, tmp_path):
+        from dotconfig.load import load_config
+
+        cfg = tmp_path / "config"
+        for d in ("dev", "prod"):
+            (cfg / d).mkdir(parents=True)
+            (cfg / d / "public.env").write_text(f"X=1\n")
+        for l in ("alice", "bob"):
+            (cfg / "local" / l).mkdir(parents=True)
+            (cfg / "local" / l / "public.env").write_text(f"U=1\n")
+
+        out = tmp_path / ".env"
+        load_config(["dev", "prod"], ["alice", "bob"], cfg, out)
+        text = out.read_text()
+
+        markers = [
+            "#@dotconfig: public (dev)",
+            "#@dotconfig: secrets (dev)",
+            "#@dotconfig: public (prod)",
+            "#@dotconfig: secrets (prod)",
+            "#@dotconfig: public-local (alice)",
+            "#@dotconfig: secrets-local (alice)",
+            "#@dotconfig: public-local (bob)",
+            "#@dotconfig: secrets-local (bob)",
+        ]
+        positions = [text.index(m) for m in markers]
+        assert positions == sorted(positions)
 
 
 # ---------------------------------------------------------------------------
