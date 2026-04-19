@@ -1,5 +1,8 @@
 ---
-status: pending
+status: in-progress
+sprint: '002'
+tickets:
+- 002-001
 ---
 
 # Plan: `dotconfig init` creates/updates .gitignore for env files
