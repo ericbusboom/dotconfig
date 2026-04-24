@@ -70,7 +70,7 @@ With `--file`: retrieves a single file from the config vault.
 - `-l/--local` — developer name for local overrides (`.env` mode) or local files (`--file` mode)
 - `--file` — retrieve a specific file instead of assembling `.env`; requires `-d` or `-l` (not both)
 - `--embed` / `-e` — embed a deployment file as base64 inside the assembled `.env` under a dedicated `files` section. Repeatable. Format: `VAR=filename`. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
-- `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Use when the consumer (`docker stack deploy`, some env-file parsers) rejects shell-style `export` prefixes. Metadata comments and section markers are preserved. Incompatible with `--file`, `--json`, `--yaml`. Note: `save` does not re-add the `export` prefix when writing back to source files — if your source files use `export`, a round-trip through `--no-export` loses that style.
+- `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Use when the consumer (`docker stack deploy`, some env-file parsers) rejects shell-style `export` prefixes. Metadata comments and section markers are preserved. Incompatible with `--file`, `--json`, `--yaml`. To round-trip source files that use `export ` through a `--no-export` load, pair with `save --add-export` so the prefix is re-added when writing back.
 - `--stdout` — print to stdout instead of writing to a file
 - `--output` / `-o` — write to a specific path instead of the default
 
@@ -111,6 +111,11 @@ the config vault.
   developer (useful for cloning a deployment)
 - `-d`/`-l` with `--file` — specify where the file goes; requires one
   or the other (not both)
+- `--add-export` — prepend `export ` to assignment lines when writing
+  back to source `.env` files. Pairs with `load --no-export` to
+  preserve shell-style sources across a round-trip. Lines already
+  prefixed with `export `, comments, and blank lines are left alone.
+  Incompatible with `--file`, `--json`, `--yaml`.
 - The `.env` **must** contain `# CONFIG_DEPLOY=` metadata for save to work.
 
 **Examples:**
@@ -119,6 +124,9 @@ the config vault.
 # Round-trip .env back to source files
 dotconfig save                                  # save to original locations
 dotconfig save -d staging                       # redirect to staging deployment
+
+# Re-add `export` prefix when writing back (pairs with load --no-export)
+dotconfig save --add-export
 
 # Store a single file
 dotconfig save -d dev --file app.yaml           # store into config/dev/
@@ -302,11 +310,10 @@ Notes:
   (`#@dotconfig: …`) are preserved — they aren't assignments.
 - Embedded files (`-e`) are already written without the `export` prefix,
   so they're unaffected.
-- Round-trip caveat: `dotconfig save` writes section bodies verbatim,
-  so it will **not** re-add the `export` prefix to source files. If your
-  source files in `config/<deploy>/` use `export`, a load-edit-save cycle
-  with `--no-export` strips that style permanently. Safe when sources use
-  plain `KEY=value`; be intentional otherwise.
+- Round-trip: if your source files use `export KEY=value`, combine
+  `load --no-export` with `save --add-export` so the style is restored
+  when writing back. Without `--add-export`, save writes section bodies
+  verbatim and the `export` prefix is lost from the source files.
 
 ### Embedding files as env vars (Docker / PEM / cert use case)
 

@@ -241,6 +241,30 @@ def _rewrite_deployment(body: str, target_deployment: str) -> str:
     return "\n".join(lines)
 
 
+def _add_export_prefix(text: str) -> str:
+    """Prepend 'export ' to KEY=value lines that don't already have it.
+
+    Blank lines, comment lines, lines already starting with 'export ', and
+    lines without '=' are returned unchanged. Leading whitespace is preserved.
+    """
+    if not text:
+        return text
+    out_lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith("export ")
+            or "=" not in stripped
+        ):
+            out_lines.append(line)
+        else:
+            indent = line[: len(line) - len(stripped)]
+            out_lines.append(indent + "export " + stripped)
+    return "\n".join(out_lines)
+
+
 def _extract_age_recipients(sops_config: Optional[Path]) -> Optional[str]:
     """Extract the age recipient public keys from sops.yaml.
 
@@ -806,6 +830,7 @@ def save_config(
     override_local=None,
     fmt: str = "env",
     flat: bool = False,
+    add_export: bool = False,
 ) -> None:
     """Save .env sections back to the config/ source files.
 
@@ -889,6 +914,10 @@ def save_config(
         target = override_deploys[0]
         for key in sections:
             sections[key] = _rewrite_deployment(sections[key], target)
+
+    if add_export:
+        for key in sections:
+            sections[key] = _add_export_prefix(sections[key])
 
     sops_config = config_dir / "sops.yaml"
     saved: list = []

@@ -463,6 +463,14 @@ def load(
     default=False,
     help="Input is a flat dict (requires --json or --yaml; can only update existing keys).",
 )
+@click.option(
+    "--add-export",
+    is_flag=True,
+    default=False,
+    help="Prepend 'export ' to assignment lines when writing back to source "
+         ".env files. Pairs with load's --no-export for round-trip style "
+         "preservation.",
+)
 def save(
     names: Tuple[str, ...],
     deploy: str,
@@ -474,6 +482,7 @@ def save(
     use_json: bool,
     use_yaml: bool,
     flat: bool,
+    add_export: bool,
 ) -> None:
     """Save .env sections back to config/ source files, or store a file.
 
@@ -520,6 +529,10 @@ def save(
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
+    if add_export and filename:
+        raise click.UsageError("--add-export cannot be used with --file")
+    if add_export and (use_json or use_yaml):
+        raise click.UsageError("--add-export cannot be used with --json or --yaml")
 
     # ---- Resolve positional names vs legacy -d/-l flags ----
     if names and (deploy or local):
@@ -564,6 +577,7 @@ def save(
             override_local=local,
             fmt=fmt,
             flat=flat,
+            add_export=add_export,
         )
 
 

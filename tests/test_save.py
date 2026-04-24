@@ -1075,3 +1075,133 @@ class TestSaveConfigNoExportRoundTrip:
             save_config(env_file, config_dir)
         assert "APP_DOMAIN=edited.example.com" in (config_dir / "dev" / "public.env").read_text()
         assert "SESSION_SECRET=new-secret" in (config_dir / "dev" / "secrets.env").read_text()
+
+
+# ---------------------------------------------------------------------------
+# _add_export_prefix helper
+# ---------------------------------------------------------------------------
+
+class TestAddExportPrefix:
+    def test_adds_prefix_to_plain_assignment(self):
+        from dotconfig.save import _add_export_prefix
+        assert _add_export_prefix("FOO=bar") == "export FOO=bar"
+
+    def test_does_not_double_up(self):
+        from dotconfig.save import _add_export_prefix
+        assert _add_export_prefix("export FOO=bar") == "export FOO=bar"
+
+    def test_preserves_comments(self):
+        from dotconfig.save import _add_export_prefix
+        result = _add_export_prefix("# a comment\nFOO=bar\n")
+        assert "# a comment" in result
+        assert "export FOO=bar" in result
+        assert "export # a comment" not in result
+
+    def test_preserves_blank_lines(self):
+        from dotconfig.save import _add_export_prefix
+        result = _add_export_prefix("\nFOO=bar\n\n")
+        assert result == "\nexport FOO=bar\n"
+
+    def test_preserves_indentation(self):
+        from dotconfig.save import _add_export_prefix
+        assert _add_export_prefix("  FOO=bar") == "  export FOO=bar"
+
+    def test_skips_lines_without_equals(self):
+        from dotconfig.save import _add_export_prefix
+        assert _add_export_prefix("JUST_A_WORD") == "JUST_A_WORD"
+
+    def test_empty_input(self):
+        from dotconfig.save import _add_export_prefix
+        assert _add_export_prefix("") == ""
+
+
+# ---------------------------------------------------------------------------
+# save_config — --add-export
+# ---------------------------------------------------------------------------
+
+class TestSaveConfigAddExport:
+    def test_add_export_adds_prefix_to_public(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP_DOMAIN=example.com\n"
+            "PORT=3000\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=abc123\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, add_export=True)
+
+        public = (config_dir / "dev" / "public.env").read_text()
+        assert "export APP_DOMAIN=example.com" in public
+        assert "export PORT=3000" in public
+
+    def test_add_export_adds_prefix_to_secrets(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP=x\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=abc123\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, add_export=True)
+
+        secrets = (config_dir / "dev" / "secrets.env").read_text()
+        assert "export SESSION_SECRET=abc123" in secrets
+
+    def test_add_export_does_not_double_up(self, env_file, config_dir):
+        # .env already has export prefix; save should leave it as single-export.
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "export APP=x\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, add_export=True)
+        public = (config_dir / "dev" / "public.env").read_text()
+        assert "export APP=x" in public
+        assert "export export" not in public
+
+    def test_add_export_default_false_writes_plain(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP=x\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        public = (config_dir / "dev" / "public.env").read_text()
+        assert "APP=x" in public
+        assert "export " not in public
+
+    def test_add_export_with_local_section(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "# CONFIG_LOCAL=alice\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP=x\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "\n"
+            "#@dotconfig: public-local (alice)\n"
+            "DEV_DOCKER_CONTEXT=orbstack\n"
+            "\n"
+            "#@dotconfig: secrets-local (alice)\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir, add_export=True)
+
+        local_public = (config_dir / "local" / "alice" / "public.env").read_text()
+        assert "export DEV_DOCKER_CONTEXT=orbstack" in local_public

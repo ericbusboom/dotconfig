@@ -238,10 +238,9 @@ When using `--no-export`, leading `export ` prefixes are stripped from
 assignment lines in the `.env` output. This is required by `docker stack
 deploy` (Swarm) and some other env-file parsers that reject shell-style
 `export` prefixes; `docker compose up` accepts both forms. Metadata
-comments and section markers are preserved. `dotconfig save` does **not**
-re-add the `export` prefix when writing back to source files, so a
-load-edit-save round-trip through `--no-export` permanently strips the
-`export` style from the source files. Incompatible with `--file`,
+comments and section markers are preserved. To round-trip source files
+that use `export KEY=value`, pair with `save --add-export` so the
+prefix is restored when writing back. Incompatible with `--file`,
 `--json`, and `--yaml`.
 
 **What it reads (without `--file`):**
@@ -273,6 +272,9 @@ Options:
   -d, --deploy TEXT     Target deployment (overrides .env metadata).
   -l, --local TEXT      Target local / developer name (overrides .env metadata).
   -f, --file TEXT       Save a specific file into the config directory.
+  --add-export          Prepend 'export ' to assignment lines when writing
+                        back to source .env files.  Pairs with load's
+                        --no-export for round-trip style preservation.
   --env-file TEXT       .env file to read and save.  [default: .env]
   --config-dir TEXT     Root config directory.  [default: config]
   --help                Show this message and exit.
@@ -287,6 +289,9 @@ dotconfig save
 # Save to a different deployment
 dotconfig save -d staging
 
+# Re-add `export` prefix on write (pairs with load --no-export)
+dotconfig save --add-export
+
 # Save a YAML file into the dev deployment
 dotconfig save -d dev --file app.yaml
 
@@ -296,6 +301,11 @@ dotconfig save -l alice --file settings.json
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
 lives in one location only.
+
+When using `--add-export`, every assignment line written back to a source
+`.env` file is prefixed with `export ` unless it already has one. Comments,
+blank lines, and section markers are left alone. Incompatible with
+`--file`, `--json`, and `--yaml`.
 
 **What it writes (without `--file`):**
 
