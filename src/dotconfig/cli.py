@@ -233,6 +233,14 @@ def init(config_dir: str, quiet: bool) -> None:
     default=False,
     help="Write public and secret values to separate files (.env + .env.secret).",
 )
+@click.option(
+    "--embed", "-e",
+    "embed_files",
+    multiple=True,
+    metavar="VAR=FILENAME",
+    help="Embed a deployment file as base64 in a 'files' section of the .env. "
+         "Format: VAR=filename. Repeatable.",
+)
 def load(
     names: Tuple[str, ...],
     deploy: str,
@@ -245,6 +253,7 @@ def load(
     use_yaml: bool,
     flat: bool,
     split: bool,
+    embed_files: Tuple[str, ...],
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -292,6 +301,10 @@ def load(
         raise click.UsageError("--split cannot be used with --stdout")
     if split and filename:
         raise click.UsageError("--split cannot be used with --file")
+    if embed_files and (use_json or use_yaml):
+        raise click.UsageError("--embed cannot be used with --json or --yaml")
+    if embed_files and filename:
+        raise click.UsageError("--embed cannot be used with --file")
 
     cfg = Path(config_dir)
 
@@ -368,6 +381,7 @@ def load(
             fmt=fmt,
             flat=flat,
             split=split,
+            embed_files=embed_files,
         )
 
 

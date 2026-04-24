@@ -9,11 +9,12 @@ Structured files (YAML, JSON) can be loaded from a deployment and
 optionally deep-merged with a local override layer.
 """
 
+import base64
 import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import click
 import yaml
@@ -376,6 +377,51 @@ def _split_path(dest: Path) -> Path:
     return dest.with_name(f"{dest.stem}.secret{dest.suffix}")
 
 
+def _embed_files_section(
+    mappings: tuple,
+    deploy_dirs: List[Path],
+    sops_config: Path,
+) -> List[str]:
+    """Load files from deploy dirs, base64-encode, return list of VAR=<base64> lines.
+
+    Searches deploy_dirs in order; first match wins. Auto-decrypts SOPS-encrypted
+    files. Returns a list of lines suitable for appending to the .env.
+    """
+    lines = []
+    for mapping in mappings:
+        if "=" not in mapping:
+            error(f"--embed value must be VAR=filename, got: {mapping}")
+            sys.exit(1)
+        var_name, _, filename = mapping.partition("=")
+        var_name = var_name.strip()
+        filename = filename.strip()
+
+        source = None
+        for deploy_dir in deploy_dirs:
+            candidate = deploy_dir / filename
+            if candidate.exists():
+                source = candidate
+                break
+
+        if source is None:
+            error(f"file not found in any deployment: {filename}")
+            sys.exit(1)
+
+        if _is_sops_encrypted(source):
+            content = _decrypt_sops(source, sops_config)
+            if content is None:
+                error(f"failed to decrypt {source}")
+                sys.exit(1)
+            content_bytes = content.encode()
+        else:
+            content_bytes = source.read_bytes()
+
+        b64 = base64.b64encode(content_bytes).decode()
+        lines.append(f"{var_name}={b64}")
+
+    return lines
+
+
 def load_config(
     deployment,
     local,
@@ -385,6 +431,7 @@ def load_config(
     fmt: str = "env",
     flat: bool = False,
     split: bool = False,
+    embed_files: tuple = (),
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
@@ -572,6 +619,16 @@ def load_config(
             if s_text:
                 parts.append(s_text)
             parts.append("")
+
+        if embed_files:
+            sops_cfg = config_dir / "sops.yaml"
+            deploy_dirs = [config_dir / d for d, _, _ in deploy_layers]
+            file_lines = _embed_files_section(embed_files, deploy_dirs, sops_cfg)
+            if file_lines:
+                parts.append("#@dotconfig: files")
+                for line in file_lines:
+                    parts.append(line)
+                parts.append("")
 
         # The legacy single-layer writer ended without a trailing blank
         # line block, so trim one trailing empty element to keep

@@ -599,3 +599,86 @@ class TestLoadConfigSplit:
         assert "DEV_DOCKER_CONTEXT" in text
         # Local secret values in secret file
         assert "LOCAL_SECRET" in secret_text
+
+
+# ---------------------------------------------------------------------------
+# load_config — embed files
+# ---------------------------------------------------------------------------
+
+class TestLoadConfigEmbedFiles:
+    def test_embed_files_section_marker_present(self, config_dir, tmp_path):
+        # Add a test file to the deployment
+        (config_dir / "dev" / "cert.pem").write_text("-----BEGIN CERT-----\nXXX\n-----END CERT-----\n")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, embed_files=("CERT=cert.pem",))
+        text = out.read_text()
+        assert "#@dotconfig: files" in text
+
+    def test_embed_files_base64_encoded(self, config_dir, tmp_path):
+        # Add a test file
+        (config_dir / "dev" / "key.txt").write_text("secret_key_content")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, embed_files=("SECRET_KEY=key.txt",))
+        text = out.read_text()
+        import base64
+        expected_b64 = base64.b64encode(b"secret_key_content").decode()
+        assert f"SECRET_KEY={expected_b64}" in text
+
+    def test_embed_multiple_files(self, config_dir, tmp_path):
+        (config_dir / "dev" / "file1.txt").write_text("content1")
+        (config_dir / "dev" / "file2.txt").write_text("content2")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, embed_files=("VAR1=file1.txt", "VAR2=file2.txt"))
+        text = out.read_text()
+        import base64
+        b64_1 = base64.b64encode(b"content1").decode()
+        b64_2 = base64.b64encode(b"content2").decode()
+        assert f"VAR1={b64_1}" in text
+        assert f"VAR2={b64_2}" in text
+
+    def test_embed_files_with_sops_encrypted(self, config_dir, tmp_path):
+        # Create an encrypted file
+        (config_dir / "dev" / "secrets.pem").write_text(
+            "-----BEGIN RSA PRIVATE KEY-----\nencrypted_content\nsops_version=3.0\nsops_mac=xyz\n"
+        )
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, embed_files=("PRIVATE_KEY=secrets.pem",))
+        text = out.read_text()
+        import base64
+        # After decryption, the sops_* lines are stripped
+        expected_content = "-----BEGIN RSA PRIVATE KEY-----\nencrypted_content\n"
+        expected_b64 = base64.b64encode(expected_content.encode()).decode()
+        assert f"PRIVATE_KEY={expected_b64}" in text
+
+    def test_embed_files_first_deployment_wins_with_stack(self, config_dir, tmp_path):
+        (config_dir / "dev" / "shared.txt").write_text("from_dev")
+        (config_dir / "prod" / "shared.txt").write_text("from_prod")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config(["dev", "prod"], None, config_dir, out, embed_files=("DATA=shared.txt",))
+        text = out.read_text()
+        import base64
+        expected_b64 = base64.b64encode(b"from_dev").decode()
+        assert f"DATA={expected_b64}" in text
+
+    def test_embed_files_missing_file_error(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            with pytest.raises(SystemExit):
+                load_config("dev", None, config_dir, out, embed_files=("MISSING=nonexistent.txt",))
+
+    def test_embed_files_empty_when_not_specified(self, config_dir, tmp_path):
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("dev", None, config_dir, out, embed_files=())
+        text = out.read_text()
+        assert "#@dotconfig: files" not in text
