@@ -117,6 +117,18 @@ class TestScanEnvFile:
         findings = _scan_env_file(f)
         assert findings == []
 
+    def test_skips_redacted_placeholder(self, tmp_path):
+        f = tmp_path / "public.env"
+        f.write_text(
+            "PIKE13_CLIENT_SECRET=REDACTED\n"
+            "ZOOM_SECRET_TOKEN=REDACTED\n"
+            "DB_PASSWORD='REDACTED'\n"
+            'API_KEY="REDACTED"\n'
+            "export ZOOM_CLIENT_SECRET=REDACTED\n"
+        )
+        findings = _scan_env_file(f)
+        assert findings == []
+
 
 # ---------------------------------------------------------------------------
 # _is_sops_file

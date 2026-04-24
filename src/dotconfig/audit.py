@@ -89,6 +89,11 @@ def _scan_env_file(path: Path) -> List[Finding]:
         value = value.strip()
         if not value:
             continue
+        # REDACTED is the placeholder save.py writes in the public half of a
+        # split; the real (encrypted) value lives in the companion file, which
+        # is audited separately.
+        if value.strip("'\"") == "REDACTED":
+            continue
         reason = _key_looks_secret(key)
         if reason and not _value_is_encrypted(value):
             findings.append(Finding(file=path, line=lineno, key=key, reason=reason))
