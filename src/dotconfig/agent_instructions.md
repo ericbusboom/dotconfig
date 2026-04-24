@@ -60,7 +60,7 @@ up a new project.
 ### `dotconfig load`
 
 ```
-dotconfig load -d <deployment> [-l <local>] [--file <name>] [--embed VAR=filename]... [--output <path>] [--stdout]
+dotconfig load -d <deployment> [-l <local>] [--file <name>] [--embed [VAR_FILE]]... [--output <path>] [--stdout]
 ```
 
 Without `--file`: assembles layered `.env` source files into a single `.env`.
@@ -69,7 +69,7 @@ With `--file`: retrieves a single file from the config vault.
 - `-d/--deploy` — the deployment name (`dev`, `prod`, `staging`, …)
 - `-l/--local` — developer name for local overrides (`.env` mode) or local files (`--file` mode)
 - `--file` — retrieve a specific file instead of assembling `.env`; requires `-d` or `-l` (not both)
-- `--embed` / `-e` — embed a deployment file as base64 inside the assembled `.env` under a dedicated `files` section. Repeatable. Format: `VAR=filename`. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
+- `--embed` / `-e` — base64-embed config files into a `#@dotconfig: files` section. Driven by the `_FILE` suffix convention: declare a `<NAME>_FILE=<filename>` variable in the config, then pass `-e <NAME>_FILE` (or `-e` alone to expand every `*_FILE` variable). The file is read from `config/<deploy>/` then `config/local/<user>/` (first-match wins; SOPS-decrypted on the fly), base64-encoded, and emitted as `<NAME>=<base64>`. The original `<NAME>_FILE` is kept in its source section so consumers that read the path-style variable still work. Repeatable. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
 - `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Implied by `-S/--stdout` (piped consumers usually reject shell-style exports). Metadata comments and section markers are preserved. Incompatible with `--file`. To round-trip source files that use `export ` through a `--no-export` load, pair with `save --add-export` so the prefix is re-added when writing back.
 - `--add-export` — ensure every assignment line in the `.env` output has an `export ` prefix (no double-up if the source already has it). Use to override the implicit `--no-export` behavior of `-S/--stdout`, or to normalize source files that mix prefixed and plain assignments. Mutually exclusive with `--no-export`.
 - `--stdout` / `-S` — print to stdout instead of writing to a file. **Implies `--no-export`** unless `--add-export` is passed.
@@ -88,9 +88,13 @@ dotconfig load -d dev --file app.yaml              # write to ./app.yaml
 dotconfig load -d dev --file app.yaml --stdout      # print to stdout
 dotconfig load -l alice --file settings.json        # from Alice's local dir
 
-# Embed deployment files as base64 inside the .env (Docker/env-var workflows)
-dotconfig load -d dev -e CERT_PEM=server.pem                      # one file
-dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key   # multiple
+# Embed deployment files as base64 inside the .env (Docker/env-var workflows).
+# The convention: declare a *_FILE variable in your config, e.g.
+#   CERT_FILE=server.pem
+# then pass the *_FILE name to -e (suffix is stripped → CERT=<base64>).
+dotconfig load -d dev -e CERT_FILE                # one file
+dotconfig load -d dev -e CERT_FILE -e KEY_FILE    # several
+dotconfig load -d dev -e                          # every *_FILE variable
 
 # Strip `export` prefix for parsers that reject shell-style assignments
 # (e.g. `docker stack deploy`).
@@ -191,7 +195,7 @@ DEV_DOCKER_CONTEXT=orbstack
 #@dotconfig: secrets-local (alice)
 
 #@dotconfig: files
-CERT_PEM=LS0tLS1CRUdJTi...     # base64-encoded file content (from --embed)
+CERT=LS0tLS1CRUdJTi...        # base64-encoded file content (from --embed CERT_FILE)
 ```
 
 **Important for agents:**
@@ -327,28 +331,50 @@ Notes:
 For deployment targets that consume certificates, PEM files, or keys through
 environment variables rather than mounted files (common with Docker images and
 serverless runtimes), embed the file as a base64-encoded variable directly in
-the `.env`:
+the `.env`. The pairing lives in the config itself via the `_FILE` suffix
+convention:
 
 ```bash
-# Embed one file
-dotconfig load -d dev -e CERT_PEM=server.pem
-
-# Embed multiple files
-dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
+# config/dev/public.env
+CERT_FILE=server.pem
+SSL_KEY_FILE=ssl.key
 ```
 
-This adds a `#@dotconfig: files` section to the `.env`:
+```bash
+# Expand one
+dotconfig load -d dev -e CERT_FILE
+
+# Expand several
+dotconfig load -d dev -e CERT_FILE -e SSL_KEY_FILE
+
+# Expand every *_FILE variable in the loaded config
+dotconfig load -d dev -e
+```
+
+The output adds a `#@dotconfig: files` section, with the `_FILE` suffix
+stripped from each destination key:
 
 ```bash
+#@dotconfig: public (dev)
+CERT_FILE=server.pem
+SSL_KEY_FILE=ssl.key
+
 #@dotconfig: files
-CERT_PEM=LS0tLS1CRUdJTi...
+CERT=LS0tLS1CRUdJTi...
 SSL_KEY=LS0tLS1CRUdJTi...
 ```
 
 Notes:
-- The source file is resolved from `config/<deploy>/<filename>` — first-match
-  wins when deployments are stacked.
-- SOPS-encrypted sources are auto-decrypted before base64 encoding.
+- Source file lookup: `config/<deploy>/<filename>` first, then
+  `config/local/<user>/<filename>`. Stacked deployments and locals are
+  searched in order; first-match wins.
+- A `*_FILE` variable can be defined in any of the four sections (deploy
+  public, deploy secrets, local public, local secrets). Locals override
+  deploys (last-write-wins).
+- SOPS-encrypted source files are auto-decrypted before base64 encoding.
+- The original `*_FILE` variable stays in its source section, so consumers
+  that read the path-style variable still work. The base64 form is the
+  parallel for env-var consumers.
 - `dotconfig save` does **not** write the `files` section back to any source
   file. The section is regenerated each time `load` runs with `-e`.
 - Incompatible with `--file`, `--json`, and `--yaml`.

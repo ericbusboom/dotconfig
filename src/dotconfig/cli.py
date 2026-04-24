@@ -237,9 +237,14 @@ def init(config_dir: str, quiet: bool) -> None:
     "--embed", "-e",
     "embed_files",
     multiple=True,
-    metavar="VAR=FILENAME",
-    help="Embed a deployment file as base64 in a 'files' section of the .env. "
-         "Format: VAR=filename. Repeatable.",
+    is_flag=False,
+    flag_value="*",
+    metavar="VAR_FILE",
+    help="Embed a config file as base64 in a 'files' section of the .env. "
+         "Pass a *_FILE variable name to expand only that one (e.g. "
+         "-e CERT_FILE); the file referenced by its value is read from the "
+         "config tree and emitted as CERT=<base64>. Pass -e with no value "
+         "to expand every *_FILE variable in the loaded config. Repeatable.",
 )
 @click.option(
     "--no-export",
@@ -313,6 +318,8 @@ def load(
         dotconfig load -d dev --file app.yaml --stdout
         dotconfig load -l alice --file settings.json -o out.json
         dotconfig load -d prod --split
+        dotconfig load -d prod -e CERT_FILE        # one *_FILE var
+        dotconfig load -d prod -e                  # all *_FILE vars
     """
     if use_json and use_yaml:
         raise click.UsageError("--json and --yaml are mutually exclusive")
@@ -326,6 +333,23 @@ def load(
         raise click.UsageError("--embed cannot be used with --json or --yaml")
     if embed_files and filename:
         raise click.UsageError("--embed cannot be used with --file")
+
+    import re as _re
+    _var_re = _re.compile(r"^[A-Z_][A-Z0-9_]*_FILE$")
+    for v in embed_files:
+        if v == "*":
+            continue
+        if "=" in v:
+            raise click.UsageError(
+                "--embed no longer accepts VAR=FILENAME; declare a "
+                "<VAR>_FILE variable in your config and pass -e <VAR>_FILE "
+                "(or -e alone to expand every *_FILE variable)"
+            )
+        if not _var_re.match(v):
+            raise click.UsageError(
+                f"--embed argument must be an UPPERCASE *_FILE variable name, "
+                f"got: {v!r}"
+            )
     if no_export and filename:
         raise click.UsageError("--no-export cannot be used with --file")
     # --no-export with --json/--yaml is a silent no-op: structured output

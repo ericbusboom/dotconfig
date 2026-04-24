@@ -154,7 +154,7 @@ SOPS_AGE_KEY_FILE=/Users/ericbusboom/.config/sops/age/keys.txt
 #@dotconfig: secrets-local (ericbusboom)
 
 #@dotconfig: files
-CERT_PEM=LS0tLS1CRUdJTi...                  # optional — only when --embed is used
+CERT=LS0tLS1CRUdJTi...                      # optional — only when --embed is used (CERT_FILE → CERT)
 ```
 
 **Last-write-wins**: when the file is shell-sourced (`set -a; . .env; set +a`),
@@ -186,8 +186,12 @@ Options:
   -d, --deploy TEXT     Deployment / environment name (e.g. dev, prod).
   -l, --local TEXT      Local / developer name for personal overrides.
   -f, --file TEXT       Load a specific file instead of assembling .env.
-  -e, --embed VAR=FILE  Embed a deployment file as base64 in the .env
-                        under a 'files' section. Repeatable.
+  -e, --embed [VAR_FILE]
+                        Base64-embed a config file into the 'files' section
+                        of the .env.  Pass a *_FILE variable name to embed
+                        only that one (e.g. -e CERT_FILE → CERT=<base64>);
+                        pass -e with no value to embed every *_FILE
+                        variable in the loaded config.  Repeatable.
   --no-export           Strip the leading 'export ' prefix from assignment
                         lines.  Implied by -S/--stdout.  Use for parsers
                         that reject shell-style exports (e.g. docker
@@ -220,9 +224,12 @@ dotconfig load -d dev --file app.yaml
 # Print a file to stdout (useful for agents / piping)
 dotconfig load -d dev --file app.yaml --stdout
 
-# Embed a PEM file as a base64 env var (Docker / env-var consumers)
-dotconfig load -d dev -e CERT_PEM=server.pem
-dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
+# Embed config files as base64 env vars (Docker / env-var consumers).
+# Declare *_FILE variables in your config (e.g. CERT_FILE=server.pem),
+# then pass the *_FILE name to -e (suffix is stripped → CERT=<base64>).
+dotconfig load -d dev -e CERT_FILE                  # one file
+dotconfig load -d dev -e CERT_FILE -e SSL_KEY_FILE  # several
+dotconfig load -d dev -e                            # every *_FILE var
 
 # Plain KEY=value output (no `export` prefix) for docker stack deploy
 dotconfig load -d prod --no-export -o .env
@@ -237,13 +244,21 @@ dotconfig load -d prod -S --add-export
 When using `--file`, specify either `-d` or `-l` (not both) — the file
 lives in one location only.
 
-When using `--embed` / `-e`, the named file is read from
-`config/<deploy>/<filename>` (auto-decrypted if SOPS-encrypted),
-base64-encoded, and written into a `#@dotconfig: files` section of the
-`.env`. The files section is regenerated on each load and is **not**
-written back to any source file by `dotconfig save`. With `--split`,
-embedded files are written to the `.env.secret` companion (they are
-treated as secrets). Incompatible with `--file`, `--json`, and `--yaml`.
+When using `--embed` / `-e`, the pairing of destination variable to
+source filename lives in the config itself via the `_FILE` suffix
+convention. Declare a `<NAME>_FILE=<filename>` variable in your config,
+then pass `-e <NAME>_FILE` (or `-e` alone to expand every `*_FILE`
+variable). For each expanded variable, dotconfig reads the referenced
+file from `config/<deploy>/<filename>` first, then
+`config/local/<user>/<filename>` (first-match wins; auto-decrypted if
+SOPS-encrypted), base64-encodes it, and emits `<NAME>=<base64>` in the
+`#@dotconfig: files` section. The original `<NAME>_FILE` variable is
+preserved in its source section, so consumers that read the path-style
+variable still work. The files section is regenerated on each load and
+is **not** written back to any source file by `dotconfig save`. With
+`--split`, embedded files are written to the `.env.secret` companion
+(they are treated as secrets). Incompatible with `--file`, `--json`,
+and `--yaml`.
 
 When using `--no-export`, leading `export ` prefixes are stripped from
 assignment lines in the `.env` output. This is required by `docker stack

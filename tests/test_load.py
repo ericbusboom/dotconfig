@@ -606,91 +606,157 @@ class TestLoadConfigSplit:
 # ---------------------------------------------------------------------------
 
 class TestLoadConfigEmbedFiles:
-    def test_embed_files_section_marker_present(self, config_dir, tmp_path):
-        # Add a test file to the deployment
-        (config_dir / "dev" / "cert.pem").write_text("-----BEGIN CERT-----\nXXX\n-----END CERT-----\n")
+    def test_explicit_var_emits_base64_under_stripped_name(self, config_dir, tmp_path):
+        # Add a *_FILE variable + a file it points to.
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("CERT_FILE=cert.pem\n")
+        (config_dir / "dev" / "cert.pem").write_text("cert_content")
 
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
-            load_config("dev", None, config_dir, out, embed_files=("CERT=cert.pem",))
+            load_config("dev", None, config_dir, out, embed_files=("CERT_FILE",))
         text = out.read_text()
+
+        import base64
+        expected_b64 = base64.b64encode(b"cert_content").decode()
         assert "#@dotconfig: files" in text
+        assert f"CERT={expected_b64}" in text
+        # Original *_FILE variable is preserved in its source section
+        assert "CERT_FILE=cert.pem" in text
 
-    def test_embed_files_base64_encoded(self, config_dir, tmp_path):
-        # Add a test file
-        (config_dir / "dev" / "key.txt").write_text("secret_key_content")
-
-        out = tmp_path / ".env"
-        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
-            load_config("dev", None, config_dir, out, embed_files=("SECRET_KEY=key.txt",))
-        text = out.read_text()
-        import base64
-        expected_b64 = base64.b64encode(b"secret_key_content").decode()
-        assert f"SECRET_KEY={expected_b64}" in text
-
-    def test_embed_multiple_files(self, config_dir, tmp_path):
-        (config_dir / "dev" / "file1.txt").write_text("content1")
-        (config_dir / "dev" / "file2.txt").write_text("content2")
+    def test_sentinel_expands_all_FILE_vars(self, config_dir, tmp_path):
+        # Two *_FILE vars in deploy public.env
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("CERT_FILE=cert.pem\nKEY_FILE=key.txt\n")
+        (config_dir / "dev" / "cert.pem").write_text("cert_content")
+        (config_dir / "dev" / "key.txt").write_text("key_content")
 
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
-            load_config("dev", None, config_dir, out, embed_files=("VAR1=file1.txt", "VAR2=file2.txt"))
+            load_config("dev", None, config_dir, out, embed_files=("*",))
         text = out.read_text()
-        import base64
-        b64_1 = base64.b64encode(b"content1").decode()
-        b64_2 = base64.b64encode(b"content2").decode()
-        assert f"VAR1={b64_1}" in text
-        assert f"VAR2={b64_2}" in text
 
-    def test_embed_files_with_sops_encrypted(self, config_dir, tmp_path):
-        # Create an encrypted file
+        import base64
+        cert_b64 = base64.b64encode(b"cert_content").decode()
+        key_b64 = base64.b64encode(b"key_content").decode()
+        assert f"CERT={cert_b64}" in text
+        assert f"KEY={key_b64}" in text
+
+    def test_explicit_plus_sentinel_means_all(self, config_dir, tmp_path):
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("ONE_FILE=a.txt\nTWO_FILE=b.txt\n")
+        (config_dir / "dev" / "a.txt").write_text("a")
+        (config_dir / "dev" / "b.txt").write_text("b")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            # Explicit ONE_FILE alongside the sentinel — broader wins.
+            load_config("dev", None, config_dir, out, embed_files=("ONE_FILE", "*"))
+        text = out.read_text()
+        # Both expanded (sentinel wins).
+        import base64
+        assert f"ONE={base64.b64encode(b'a').decode()}" in text
+        assert f"TWO={base64.b64encode(b'b').decode()}" in text
+
+    def test_decrypts_sops_encrypted_source(self, config_dir, tmp_path):
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("PRIVATE_KEY_FILE=secrets.pem\n")
         (config_dir / "dev" / "secrets.pem").write_text(
             "-----BEGIN RSA PRIVATE KEY-----\nencrypted_content\nsops_version=3.0\nsops_mac=xyz\n"
         )
 
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
-            load_config("dev", None, config_dir, out, embed_files=("PRIVATE_KEY=secrets.pem",))
+            load_config("dev", None, config_dir, out, embed_files=("PRIVATE_KEY_FILE",))
         text = out.read_text()
+
         import base64
-        # After decryption, the sops_* lines are stripped
         expected_content = "-----BEGIN RSA PRIVATE KEY-----\nencrypted_content\n"
         expected_b64 = base64.b64encode(expected_content.encode()).decode()
         assert f"PRIVATE_KEY={expected_b64}" in text
 
-    def test_embed_files_first_deployment_wins_with_stack(self, config_dir, tmp_path):
+    def test_stacked_deploys_first_match_wins_for_file(self, config_dir, tmp_path):
+        # Define DATA_FILE in dev's public.env; both deploys carry the same filename.
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("DATA_FILE=shared.txt\n")
         (config_dir / "dev" / "shared.txt").write_text("from_dev")
         (config_dir / "prod" / "shared.txt").write_text("from_prod")
 
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
-            load_config(["dev", "prod"], None, config_dir, out, embed_files=("DATA=shared.txt",))
+            load_config(["dev", "prod"], None, config_dir, out, embed_files=("DATA_FILE",))
         text = out.read_text()
         import base64
-        expected_b64 = base64.b64encode(b"from_dev").decode()
-        assert f"DATA={expected_b64}" in text
+        assert f"DATA={base64.b64encode(b'from_dev').decode()}" in text
 
-    def test_embed_files_missing_file_error(self, config_dir, tmp_path):
+    def test_local_dir_searched_after_deploy_dirs(self, config_dir, tmp_path):
+        # DATA_FILE points to a name only present in the local dir.
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("DATA_FILE=local_only.txt\n")
+        (config_dir / "local" / "alice" / "local_only.txt").write_text("from_local")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config(
+                "dev", "alice", config_dir, out, embed_files=("DATA_FILE",),
+            )
+        text = out.read_text()
+        import base64
+        assert f"DATA={base64.b64encode(b'from_local').decode()}" in text
+
+    def test_local_can_override_deploy_FILE_var(self, config_dir, tmp_path):
+        # Deploy declares DATA_FILE=deploy_data.txt, local overrides to local_data.txt.
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("DATA_FILE=deploy_data.txt\n")
+        (config_dir / "dev" / "deploy_data.txt").write_text("deploy_value")
+        with (config_dir / "local" / "alice" / "public.env").open("a") as f:
+            f.write("DATA_FILE=local_data.txt\n")
+        (config_dir / "local" / "alice" / "local_data.txt").write_text("local_value")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config(
+                "dev", "alice", config_dir, out, embed_files=("DATA_FILE",),
+            )
+        text = out.read_text()
+        import base64
+        assert f"DATA={base64.b64encode(b'local_value').decode()}" in text
+
+    def test_missing_FILE_variable_errors(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             with pytest.raises(SystemExit):
-                load_config("dev", None, config_dir, out, embed_files=("MISSING=nonexistent.txt",))
+                load_config(
+                    "dev", None, config_dir, out, embed_files=("NOPE_FILE",),
+                )
 
-    def test_embed_files_empty_when_not_specified(self, config_dir, tmp_path):
+    def test_FILE_var_pointing_at_missing_file_errors(self, config_dir, tmp_path):
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("MISS_FILE=does_not_exist.pem\n")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            with pytest.raises(SystemExit):
+                load_config(
+                    "dev", None, config_dir, out, embed_files=("MISS_FILE",),
+                )
+
+    def test_empty_embed_files_omits_files_section(self, config_dir, tmp_path):
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config("dev", None, config_dir, out, embed_files=())
-        text = out.read_text()
-        assert "#@dotconfig: files" not in text
+        assert "#@dotconfig: files" not in out.read_text()
 
     def test_embed_with_split_goes_to_secret_file(self, config_dir, tmp_path):
+        with (config_dir / "dev" / "public.env").open("a") as f:
+            f.write("CERT_FILE=cert.pem\n")
         (config_dir / "dev" / "cert.pem").write_text("cert_content")
 
         out = tmp_path / ".env"
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             load_config(
                 "dev", None, config_dir, out,
-                split=True, embed_files=("CERT_PEM=cert.pem",),
+                split=True, embed_files=("CERT_FILE",),
             )
 
         public_text = out.read_text()
@@ -699,11 +765,13 @@ class TestLoadConfigEmbedFiles:
         import base64
         expected_b64 = base64.b64encode(b"cert_content").decode()
 
-        # Files section lives in the secret half, NOT the public half
-        assert "CERT_PEM" not in public_text
-        assert f"CERT_PEM={expected_b64}" in secret_text
+        # Base64 form lives in the secret half; the original CERT_FILE
+        # variable still appears in the public half (deploy public.env).
+        assert f"CERT={expected_b64}" not in public_text
+        assert f"CERT={expected_b64}" in secret_text
         assert "#@dotconfig: files" in secret_text
         assert "#@dotconfig: files" not in public_text
+        assert "CERT_FILE=cert.pem" in public_text
 
     def test_no_export_strips_export_prefix(self, tmp_path):
         cfg = tmp_path / "config"
@@ -808,14 +876,16 @@ class TestLoadConfigEmbedFiles:
     def test_no_export_preserves_embed_files_section(self, tmp_path):
         cfg = tmp_path / "config"
         (cfg / "prod").mkdir(parents=True)
-        (cfg / "prod" / "public.env").write_text("export APP=myapp\n")
+        (cfg / "prod" / "public.env").write_text(
+            "export APP=myapp\nexport CERT_FILE=cert.pem\n"
+        )
         (cfg / "prod" / "cert.pem").write_text("cert_content")
 
         out = tmp_path / ".env"
         load_config(
             "prod", None, cfg, out,
             no_export=True,
-            embed_files=("CERT_PEM=cert.pem",),
+            embed_files=("CERT_FILE",),
         )
         text = out.read_text()
         import base64
@@ -823,7 +893,7 @@ class TestLoadConfigEmbedFiles:
 
         assert "export " not in text
         assert "APP=myapp" in text
-        assert f"CERT_PEM={b64}" in text
+        assert f"CERT={b64}" in text
         assert "#@dotconfig: files" in text
 
     def test_env_lines_to_dict_strips_export_prefix(self):
@@ -893,16 +963,18 @@ class TestLoadConfigEmbedFiles:
     def test_embed_with_split_writes_secret_file_even_when_no_other_secrets(self, config_dir, tmp_path):
         # prod has no secrets.env, so the secret file is usually not written.
         # With --embed, the file must still appear.
+        with (config_dir / "prod" / "public.env").open("a") as f:
+            f.write("CERT_FILE=cert.pem\n")
         (config_dir / "prod" / "cert.pem").write_text("prod_cert")
 
         out = tmp_path / ".env"
         load_config(
             "prod", None, config_dir, out,
-            split=True, embed_files=("CERT_PEM=cert.pem",),
+            split=True, embed_files=("CERT_FILE",),
         )
 
         assert (tmp_path / ".env.secret").exists()
         secret_text = (tmp_path / ".env.secret").read_text()
         import base64
         expected_b64 = base64.b64encode(b"prod_cert").decode()
-        assert f"CERT_PEM={expected_b64}" in secret_text
+        assert f"CERT={expected_b64}" in secret_text

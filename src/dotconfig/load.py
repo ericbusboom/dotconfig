@@ -424,34 +424,66 @@ def _add_export_prefix(text: str) -> str:
     return "\n".join(out_lines)
 
 
+EMBED_ALL_SENTINEL = "*"
+
+
 def _embed_files_section(
-    mappings: tuple,
+    var_names: tuple,
+    effective_env: Dict[str, str],
     deploy_dirs: List[Path],
+    local_dirs: List[Path],
     sops_config: Path,
 ) -> List[str]:
-    """Load files from deploy dirs, base64-encode, return list of VAR=<base64> lines.
+    """Resolve `_FILE` variables and emit base64-encoded `KEY=value` lines.
 
-    Searches deploy_dirs in order; first match wins. Auto-decrypts SOPS-encrypted
-    files. Returns a list of lines suitable for appending to the .env.
+    *var_names* is a tuple of `_FILE` variable names to expand, optionally
+    containing the ``EMBED_ALL_SENTINEL`` ("*") which means "expand every
+    `*_FILE` variable found in *effective_env*". When the sentinel and
+    explicit names appear together, the broader behavior wins.
+
+    For each resolved variable, the value is looked up in *effective_env*
+    and treated as a filename. The file is searched in *deploy_dirs* first,
+    then in *local_dirs*, both in stack order. First match wins.
+    SOPS-encrypted source files are auto-decrypted before encoding.
+
+    The destination key is the var_name with the trailing ``_FILE`` stripped
+    (e.g. ``CERT_FILE`` → ``CERT``).
+
+    Returns the list of ``KEY=<base64>`` lines to append under
+    ``#@dotconfig: files``.
     """
+    if EMBED_ALL_SENTINEL in var_names:
+        names = sorted(k for k in effective_env if k.endswith("_FILE"))
+    else:
+        names = list(var_names)
+
     lines = []
-    for mapping in mappings:
-        if "=" not in mapping:
-            error(f"--embed value must be VAR=filename, got: {mapping}")
+    for var_name in names:
+        if not var_name.endswith("_FILE"):
+            error(f"--embed argument must be a *_FILE variable name, got: {var_name}")
             sys.exit(1)
-        var_name, _, filename = mapping.partition("=")
-        var_name = var_name.strip()
-        filename = filename.strip()
+
+        if var_name not in effective_env:
+            error(f"--embed: variable {var_name} not found in config")
+            sys.exit(1)
+
+        filename = effective_env[var_name].strip()
+        if not filename:
+            error(f"--embed: variable {var_name} has empty value")
+            sys.exit(1)
 
         source = None
-        for deploy_dir in deploy_dirs:
-            candidate = deploy_dir / filename
+        for d in list(deploy_dirs) + list(local_dirs):
+            candidate = d / filename
             if candidate.exists():
                 source = candidate
                 break
 
         if source is None:
-            error(f"file not found in any deployment: {filename}")
+            error(
+                f"--embed: file '{filename}' (referenced by {var_name}) "
+                f"not found in any deployment or local dir"
+            )
             sys.exit(1)
 
         if _is_sops_encrypted(source):
@@ -464,7 +496,8 @@ def _embed_files_section(
             content_bytes = source.read_bytes()
 
         b64 = base64.b64encode(content_bytes).decode()
-        lines.append(f"{var_name}={b64}")
+        base_name = var_name[: -len("_FILE")]
+        lines.append(f"{base_name}={b64}")
 
     return lines
 
@@ -590,7 +623,17 @@ def load_config(
             if embed_files:
                 sops_cfg = config_dir / "sops.yaml"
                 deploy_dirs = [config_dir / d for d, _, _ in deploy_layers]
-                file_lines = _embed_files_section(embed_files, deploy_dirs, sops_cfg)
+                local_dirs = [config_dir / "local" / l for l, _, _ in local_layers]
+                effective: Dict[str, str] = {}
+                for _, p_text, s_text in deploy_layers:
+                    effective.update(_env_lines_to_dict(p_text))
+                    effective.update(_env_lines_to_dict(s_text))
+                for _, p_text, s_text in local_layers:
+                    effective.update(_env_lines_to_dict(p_text))
+                    effective.update(_env_lines_to_dict(s_text))
+                file_lines = _embed_files_section(
+                    embed_files, effective, deploy_dirs, local_dirs, sops_cfg,
+                )
                 if file_lines:
                     secrets_parts.append("#@dotconfig: files")
                     secrets_parts.extend(file_lines)
@@ -688,7 +731,17 @@ def load_config(
         if embed_files:
             sops_cfg = config_dir / "sops.yaml"
             deploy_dirs = [config_dir / d for d, _, _ in deploy_layers]
-            file_lines = _embed_files_section(embed_files, deploy_dirs, sops_cfg)
+            local_dirs = [config_dir / "local" / l for l, _, _ in local_layers]
+            effective: Dict[str, str] = {}
+            for _, p_text, s_text in deploy_layers:
+                effective.update(_env_lines_to_dict(p_text))
+                effective.update(_env_lines_to_dict(s_text))
+            for _, p_text, s_text in local_layers:
+                effective.update(_env_lines_to_dict(p_text))
+                effective.update(_env_lines_to_dict(s_text))
+            file_lines = _embed_files_section(
+                embed_files, effective, deploy_dirs, local_dirs, sops_cfg,
+            )
             if file_lines:
                 parts.append("#@dotconfig: files")
                 for line in file_lines:

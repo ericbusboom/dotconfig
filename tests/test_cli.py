@@ -439,3 +439,82 @@ class TestSaveCliPositional:
         )
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output.lower()
+
+    def test_embed_old_VAR_FILENAME_form_rejected(self, tmp_path, monkeypatch):
+        """The old `-e VAR=FILENAME` form is removed; helpful error directs
+        users at the new `_FILE` convention."""
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-e", "CERT=cert.pem", "-c", str(cfg)]
+        )
+        assert result.exit_code != 0
+        assert "_file" in result.output.lower()
+
+    def test_embed_non_FILE_var_name_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-e", "FOO", "-c", str(cfg)]
+        )
+        assert result.exit_code != 0
+        assert "_file" in result.output.lower()
+
+    def test_embed_lowercase_var_name_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-e", "cert_file", "-c", str(cfg)]
+        )
+        assert result.exit_code != 0
+        # Error message mentions the *_FILE convention.
+        assert "_file" in result.output.lower()
+
+    def test_embed_explicit_FILE_var_works(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("CERT_FILE=cert.pem\n")
+        (cfg / "prod" / "cert.pem").write_text("cert_content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-e", "CERT_FILE", "-S", "-c", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        import base64
+        expected_b64 = base64.b64encode(b"cert_content").decode()
+        assert f"CERT={expected_b64}" in result.output
+        assert "#@dotconfig: files" in result.output
+
+    def test_embed_sentinel_alone_expands_all(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text(
+            "CERT_FILE=cert.pem\nKEY_FILE=key.txt\n"
+        )
+        (cfg / "prod" / "cert.pem").write_text("cert")
+        (cfg / "prod" / "key.txt").write_text("key")
+
+        runner = CliRunner()
+        # `-e` with no value uses Click's flag_value sentinel.
+        result = runner.invoke(
+            cli, ["load", "prod", "-e", "-S", "-c", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        import base64
+        assert f"CERT={base64.b64encode(b'cert').decode()}" in result.output
+        assert f"KEY={base64.b64encode(b'key').decode()}" in result.output
