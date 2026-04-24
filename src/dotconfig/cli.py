@@ -23,8 +23,9 @@ dotconfig gh-push -d <deployment>
 dotconfig config
     Show dotconfig configuration and discovered paths.
 
-dotconfig agent
-    Print full operational instructions for AI agents.
+dotconfig --instructions
+    Print full operational instructions for AI agents and humans
+    (includes the live --help text of every subcommand).
 """
 
 import click
@@ -110,8 +111,26 @@ def _classify_save_args(
     return deploy, local
 
 
+def _print_instructions(ctx: click.Context, param, value: bool) -> None:
+    """Eager callback for --instructions: print full instructions and exit."""
+    if not value or ctx.resilient_parsing:
+        return
+    # Pass the live cli group in so the help reference is auto-generated
+    # from the current command surface.
+    show_agent_instructions(ctx.command if isinstance(ctx.command, click.Group) else cli)
+    ctx.exit()
+
+
 @click.group()
 @click.version_option()
+@click.option(
+    "--instructions",
+    is_flag=True,
+    callback=_print_instructions,
+    expose_value=False,
+    is_eager=True,
+    help="Print complete agent / usage instructions (with all subcommand help) and exit.",
+)
 def cli() -> None:
     """dotconfig — environment configuration cascade manager.
 
@@ -120,7 +139,8 @@ def cli() -> None:
     overrides) stored under a config/ directory.
 
     \b
-    AI agents: run "dotconfig agent" for full operational instructions.
+    AI agents and humans wanting the full manual: run
+        dotconfig --instructions
     """
 
 
@@ -881,19 +901,3 @@ def install_hooks() -> None:
     import sys
     if not install_pre_commit_hook():
         sys.exit(1)
-
-
-@cli.command()
-def agent() -> None:
-    """Print full operational instructions for AI agents.
-
-    Outputs a comprehensive markdown document describing how dotconfig
-    works, all available commands, the directory layout, the .env format,
-    and rules that agents should follow when operating on configuration.
-
-    Example:
-
-    \b
-        dotconfig agent
-    """
-    show_agent_instructions()

@@ -162,13 +162,14 @@ dotconfig config
 Shows the installed version, config directory name, and where the config
 directory was found.  Useful for verifying your setup.
 
-### `dotconfig agent`
+### `dotconfig --instructions`
 
 ```
-dotconfig agent
+dotconfig --instructions
 ```
 
-Prints this document.  If you are reading this, you have already run it
+Prints this document plus an auto-generated reference of every
+subcommand's `--help`. If you are reading this, you have already run it
 or are reading the source file directly.
 
 ---
@@ -403,6 +404,144 @@ dotconfig keys
 dotconfig init
 dotconfig load -d dev -l yourname
 ```
+
+---
+
+## Choosing the right command
+
+Quick decision guide for common situations:
+
+| Situation | Command |
+|---|---|
+| First time using dotconfig in a project | `dotconfig init` |
+| Need a fresh `.env` for local dev | `dotconfig load -d <deploy> -l <you>` |
+| Need a `.env` for prod / CI / Docker | `dotconfig load -d <deploy>` |
+| Pipe config into another tool | `dotconfig load -d <deploy> -S` |
+| Output as JSON for tooling that wants structured data | `dotconfig load -d <deploy> --json --flat -S` |
+| `docker stack deploy` rejects `export ` prefix | `dotconfig load --no-export -o .env` (or just `-S` — implicit) |
+| Edit `.env` and write changes back to source | edit `.env`, then `dotconfig save` |
+| Move all keys from one deployment to a new name | `dotconfig save -d <new-deploy>` |
+| Pull a single YAML/JSON file out of config | `dotconfig load -d <deploy> --file app.yaml` |
+| Drop a YAML/JSON config file *into* the vault | `dotconfig save -d <deploy> --file app.yaml` |
+| Embed a cert / PEM as a base64 env var | declare `CERT_FILE=cert.pem` in config, then `dotconfig load -d <deploy> -e CERT_FILE` (or `-e` alone for all `*_FILE` vars) |
+| Push secrets to GitHub Actions / Codespaces | `dotconfig gh-push -d <deploy>` |
+| Check that no plaintext secrets snuck into config/ | `dotconfig audit` |
+| Set up the pre-commit safety net | `dotconfig install-hooks` |
+| Read this manual | `dotconfig --instructions` |
+
+**`-d` vs `-l` mental model.** `-d` selects a *deployment* (shared:
+`dev`, `prod`, `staging`, …). `-l` selects a *local override layer*
+keyed by developer name. They are independent and may be combined; the
+local layer wins on conflict. You can also stack multiple `-d` /
+positional names — see "Layered `.env`" above.
+
+**Pick the format.** `.env` is the default, suitable for shells, Docker
+Compose, and most tools. `--json` / `--yaml` produce structured output
+that's easier to parse programmatically (single-key lookup, type-aware
+tooling). `--split` produces two files: a public `.env` plus an
+`.env.secret` companion — useful when you want to gitignore one half
+and check the other in.
+
+---
+
+## Worked example: a full project lifecycle
+
+This walkthrough shows the canonical sequence from a brand-new repo to
+day-to-day editing. Anywhere you see `<you>`, substitute your developer
+name.
+
+```bash
+# 1. Bootstrap. Creates config/, an age key if missing, and registers
+#    your public key in config/sops.yaml.
+dotconfig init
+
+# 2. Add a deployment.
+mkdir -p config/dev
+cat > config/dev/public.env <<'EOF'
+APP_DOMAIN=example.com
+NODE_ENV=development
+PORT=3000
+EOF
+
+# 3. Add deployment secrets (encrypted at rest).
+echo 'SESSION_SECRET=replace-me' > config/dev/secrets.env
+sops --encrypt --in-place config/dev/secrets.env
+
+# 4. Add your personal local overrides.
+mkdir -p config/local/<you>
+echo 'DEV_DOCKER_CONTEXT=orbstack' > config/local/<you>/public.env
+
+# 5. Materialize a working .env.
+dotconfig load -d dev -l <you>
+
+# 6. Verify the audit passes.
+dotconfig audit
+
+# 7. Install the pre-commit hook (catches plaintext secrets).
+dotconfig install-hooks
+```
+
+To **edit** a value:
+
+```bash
+# 8. Open .env in your editor, change SESSION_SECRET=…, save the file.
+# 9. Round-trip back to the source files. Secrets stay encrypted.
+dotconfig save
+```
+
+To **add a new variable**:
+
+```bash
+# 10. Append it under the appropriate #@dotconfig: section in .env, then:
+dotconfig save
+```
+
+To **create a new deployment from an existing one** (e.g. clone dev → staging):
+
+```bash
+dotconfig load -d dev -S | tee .env
+dotconfig save -d staging          # writes to config/staging/
+```
+
+---
+
+## Troubleshooting
+
+**`CONFIG_DEPLOY not found in .env`** — You ran `dotconfig save` against a
+file that was not produced by `dotconfig load`. Save needs the metadata
+header (`# CONFIG_DEPLOY=…`) to know which source files to update.
+Regenerate `.env` with `dotconfig load`, edit it, then save.
+
+**`UNENCRYPTED SECRETS DETECTED` after save** — Either a secret-named
+key landed in a public section (move it under `#@dotconfig: secrets
+(<deploy>)` and save again), or `sops` is not installed / not finding an
+age key. Run `dotconfig keys` to verify your key setup.
+
+**`sops not found — skipping encrypted file`** — Install `sops`:
+`brew install sops` (macOS) or
+`go install github.com/getsops/sops/v3/cmd/sops@latest`.
+
+**`failed to decrypt …`** — Your age private key is missing or wrong.
+Set `SOPS_AGE_KEY_FILE=/path/to/keys.txt` (or put the key at
+`~/.config/sops/age/keys.txt`). Run `dotconfig keys` to inspect.
+
+**JSON output has weird keys like `"export FOO"`** — You're on a stale
+release; upgrade. Newer versions strip `export ` from the key when
+emitting JSON/YAML.
+
+**`docker stack deploy` rejects the `.env`** — The Swarm parser doesn't
+accept shell-style `export KEY=value`. Use `--no-export` (or just `-S`,
+which implies it).
+
+**Round-trip lost the `export ` prefix from my source files** — Save
+writes section bodies verbatim, so a `--no-export` load + edit + save
+strips the prefix. To preserve style, pair `load --no-export` with
+`save --add-export`.
+
+**`-e FOO_FILE` says "variable not found in config"** — Either the
+variable isn't actually in the config (typo? wrong layer?) or you've
+specified a deploy/local that doesn't include it. Check with
+`dotconfig load -d <deploy> -l <local> -S | grep _FILE`.
 
 ---
 
