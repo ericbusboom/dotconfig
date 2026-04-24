@@ -682,3 +682,42 @@ class TestLoadConfigEmbedFiles:
             load_config("dev", None, config_dir, out, embed_files=())
         text = out.read_text()
         assert "#@dotconfig: files" not in text
+
+    def test_embed_with_split_goes_to_secret_file(self, config_dir, tmp_path):
+        (config_dir / "dev" / "cert.pem").write_text("cert_content")
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config(
+                "dev", None, config_dir, out,
+                split=True, embed_files=("CERT_PEM=cert.pem",),
+            )
+
+        public_text = out.read_text()
+        secret_text = (tmp_path / ".env.secret").read_text()
+
+        import base64
+        expected_b64 = base64.b64encode(b"cert_content").decode()
+
+        # Files section lives in the secret half, NOT the public half
+        assert "CERT_PEM" not in public_text
+        assert f"CERT_PEM={expected_b64}" in secret_text
+        assert "#@dotconfig: files" in secret_text
+        assert "#@dotconfig: files" not in public_text
+
+    def test_embed_with_split_writes_secret_file_even_when_no_other_secrets(self, config_dir, tmp_path):
+        # prod has no secrets.env, so the secret file is usually not written.
+        # With --embed, the file must still appear.
+        (config_dir / "prod" / "cert.pem").write_text("prod_cert")
+
+        out = tmp_path / ".env"
+        load_config(
+            "prod", None, config_dir, out,
+            split=True, embed_files=("CERT_PEM=cert.pem",),
+        )
+
+        assert (tmp_path / ".env.secret").exists()
+        secret_text = (tmp_path / ".env.secret").read_text()
+        import base64
+        expected_b64 = base64.b64encode(b"prod_cert").decode()
+        assert f"CERT_PEM={expected_b64}" in secret_text

@@ -224,8 +224,9 @@ When using `--embed` / `-e`, the named file is read from
 `config/<deploy>/<filename>` (auto-decrypted if SOPS-encrypted),
 base64-encoded, and written into a `#@dotconfig: files` section of the
 `.env`. The files section is regenerated on each load and is **not**
-written back to any source file by `dotconfig save`. Incompatible with
-`--file`, `--json`, and `--yaml`.
+written back to any source file by `dotconfig save`. With `--split`,
+embedded files are written to the `.env.secret` companion (they are
+treated as secrets). Incompatible with `--file`, `--json`, and `--yaml`.
 
 **What it reads (without `--file`):**
 

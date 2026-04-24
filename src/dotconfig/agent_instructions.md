@@ -310,6 +310,8 @@ Notes:
 - `dotconfig save` does **not** write the `files` section back to any source
   file. The section is regenerated each time `load` runs with `-e`.
 - Incompatible with `--file`, `--json`, and `--yaml`.
+- With `--split`: embedded files go into the `.env.secret` companion (treated
+  as secrets), not the public `.env`.
 
 ### Adding a new deployment
 

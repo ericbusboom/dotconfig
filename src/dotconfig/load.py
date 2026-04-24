@@ -537,6 +537,15 @@ def load_config(
             for _, _, s_text in local_layers:
                 if s_text:
                     secrets_parts.append(s_text)
+
+            if embed_files:
+                sops_cfg = config_dir / "sops.yaml"
+                deploy_dirs = [config_dir / d for d, _, _ in deploy_layers]
+                file_lines = _embed_files_section(embed_files, deploy_dirs, sops_cfg)
+                if file_lines:
+                    secrets_parts.append("#@dotconfig: files")
+                    secrets_parts.extend(file_lines)
+
             secrets_assembled = "\n".join(secrets_parts) + "\n" if secrets_parts else ""
 
             default_output = Path(".env")
