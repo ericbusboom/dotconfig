@@ -37,6 +37,8 @@ def _ensure_files_dir() -> Path:
 def _env_lines_to_dict(content: str) -> Dict[str, str]:
     """Parse KEY=VALUE lines into a dict, skipping comments and blanks.
 
+    A leading shell-style ``export `` on assignment lines is stripped so
+    that JSON/YAML output uses the canonical variable name as the key.
     Surrounding quotes on values are stripped (both single and double).
     """
     result: Dict[str, str] = {}
@@ -44,6 +46,8 @@ def _env_lines_to_dict(content: str) -> Dict[str, str]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        if stripped.startswith("export "):
+            stripped = stripped[len("export "):].lstrip()
         if "=" not in stripped:
             continue
         key, _, value = stripped.partition("=")

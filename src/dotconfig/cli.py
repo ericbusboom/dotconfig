@@ -314,10 +314,10 @@ def load(
         raise click.UsageError("--embed cannot be used with --json or --yaml")
     if embed_files and filename:
         raise click.UsageError("--embed cannot be used with --file")
-    if no_export and (use_json or use_yaml):
-        raise click.UsageError("--no-export cannot be used with --json or --yaml")
     if no_export and filename:
         raise click.UsageError("--no-export cannot be used with --file")
+    # --no-export with --json/--yaml is a silent no-op: structured output
+    # doesn't carry the `export ` prefix, so there's nothing to strip.
 
     cfg = Path(config_dir)
 

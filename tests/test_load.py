@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dotconfig.load import _decrypt_sops, _deep_merge, _is_sops_encrypted, _split_path, load_config, load_file
+from dotconfig.load import _decrypt_sops, _deep_merge, _env_lines_to_dict, _is_sops_encrypted, _split_path, load_config, load_file
 
 
 @pytest.fixture()
@@ -802,6 +802,70 @@ class TestLoadConfigEmbedFiles:
         assert "APP=myapp" in text
         assert f"CERT_PEM={b64}" in text
         assert "#@dotconfig: files" in text
+
+    def test_env_lines_to_dict_strips_export_prefix(self):
+        d = _env_lines_to_dict("export FOO=bar\nBAZ=qux\n")
+        assert d == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_env_lines_to_dict_strips_quoted_values(self):
+        d = _env_lines_to_dict("export FOO='bar'\nexport BAZ=\"qux\"\n")
+        assert d == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_env_lines_to_dict_preserves_comments_and_blanks(self):
+        d = _env_lines_to_dict("# a comment\n\nexport FOO=bar\n")
+        assert d == {"FOO": "bar"}
+
+    def test_json_flat_output_has_clean_keys(self, tmp_path):
+        # Reproduction from the TODO: source files use `export KEY=val`,
+        # --json --flat output must have canonical KEY as object keys.
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text(
+            "export PIKE13_BUSINESS_DOMAIN='jtl.pike13.com'\n"
+            "export LEAGUE_BEFORETIMES='2015-01-01T00:00:00Z'\n"
+            "export MEETUP_CLIENT_ID='abc'\n"
+        )
+
+        out = tmp_path / ".env.json"
+        load_config("prod", None, cfg, out, fmt="json", flat=True)
+
+        import json, re
+        data = json.loads(out.read_text())
+        assert "PIKE13_BUSINESS_DOMAIN" in data
+        assert "LEAGUE_BEFORETIMES" in data
+        assert "MEETUP_CLIENT_ID" in data
+        # Smoke-check per the TODO's acceptance criteria: every key must
+        # match the canonical shell-variable pattern (no spaces, no prefix).
+        key_re = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+        for k in data:
+            assert key_re.match(k), f"malformed key in JSON output: {k!r}"
+
+    def test_yaml_flat_output_has_clean_keys(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        out = tmp_path / ".env.yaml"
+        load_config("prod", None, cfg, out, fmt="yaml", flat=True)
+
+        import yaml as yaml_mod
+        data = yaml_mod.safe_load(out.read_text())
+        assert "FOO" in data
+        assert "export FOO" not in data
+
+    def test_json_structured_output_has_clean_keys(self, tmp_path):
+        # Non-flat (nested public/secrets) path — same fix should apply.
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        out = tmp_path / ".env.json"
+        load_config("prod", None, cfg, out, fmt="json")
+
+        import json
+        data = json.loads(out.read_text())
+        assert "FOO" in data["prod"]["public"]
+        assert "export FOO" not in data["prod"]["public"]
 
     def test_embed_with_split_writes_secret_file_even_when_no_other_secrets(self, config_dir, tmp_path):
         # prod has no secrets.env, so the secret file is usually not written.

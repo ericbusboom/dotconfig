@@ -369,3 +369,20 @@ class TestSaveCliPositional:
         )
         assert result.exit_code != 0
         assert "at most two" in result.output.lower()
+
+    def test_no_export_with_json_is_silent_noop(self, tmp_path, monkeypatch):
+        """--no-export with --json/--yaml used to error; now it's a silent no-op
+        because JSON/YAML output never carries the `export ` prefix."""
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "--no-export", "--json", "--flat", "-S", "-c", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads(result.output)
+        assert data == {"FOO": "bar"}
