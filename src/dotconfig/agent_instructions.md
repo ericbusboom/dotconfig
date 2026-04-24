@@ -60,7 +60,7 @@ up a new project.
 ### `dotconfig load`
 
 ```
-dotconfig load -d <deployment> [-l <local>] [--file <name>] [--output <path>] [--stdout]
+dotconfig load -d <deployment> [-l <local>] [--file <name>] [--embed VAR=filename]... [--output <path>] [--stdout]
 ```
 
 Without `--file`: assembles layered `.env` source files into a single `.env`.
@@ -69,6 +69,7 @@ With `--file`: retrieves a single file from the config vault.
 - `-d/--deploy` — the deployment name (`dev`, `prod`, `staging`, …)
 - `-l/--local` — developer name for local overrides (`.env` mode) or local files (`--file` mode)
 - `--file` — retrieve a specific file instead of assembling `.env`; requires `-d` or `-l` (not both)
+- `--embed` / `-e` — embed a deployment file as base64 inside the assembled `.env` under a dedicated `files` section. Repeatable. Format: `VAR=filename`. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
 - `--stdout` — print to stdout instead of writing to a file
 - `--output` / `-o` — write to a specific path instead of the default
 
@@ -84,6 +85,10 @@ dotconfig load -d dev --stdout          # print assembled .env to stdout
 dotconfig load -d dev --file app.yaml              # write to ./app.yaml
 dotconfig load -d dev --file app.yaml --stdout      # print to stdout
 dotconfig load -l alice --file settings.json        # from Alice's local dir
+
+# Embed deployment files as base64 inside the .env (Docker/env-var workflows)
+dotconfig load -d dev -e CERT_PEM=server.pem                      # one file
+dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key   # multiple
 ```
 
 ### `dotconfig save`
@@ -164,6 +169,9 @@ SESSION_SECRET=abc123
 DEV_DOCKER_CONTEXT=orbstack
 
 #@dotconfig: secrets-local (alice)
+
+#@dotconfig: files
+CERT_PEM=LS0tLS1CRUdJTi...     # base64-encoded file content (from --embed)
 ```
 
 **Important for agents:**
@@ -176,6 +184,10 @@ DEV_DOCKER_CONTEXT=orbstack
 - To change a value, edit it in place within the correct section, then run
   `dotconfig save`.
 - To add a new variable, add it under the appropriate section marker.
+- The `#@dotconfig: files` section (only present when `--embed`/`-e` was used)
+  holds base64-encoded file content. It is **not** written back to any source
+  file by `dotconfig save` — it is regenerated on each `load`. Do not hand-edit
+  these values; change the source file in `config/<deploy>/` and reload.
 
 ---
 
@@ -267,6 +279,37 @@ dotconfig load -d dev --file app.yaml --stdout
 # Save a JSON file into a local directory
 dotconfig save -l alice --file settings.json
 ```
+
+### Embedding files as env vars (Docker / PEM / cert use case)
+
+For deployment targets that consume certificates, PEM files, or keys through
+environment variables rather than mounted files (common with Docker images and
+serverless runtimes), embed the file as a base64-encoded variable directly in
+the `.env`:
+
+```bash
+# Embed one file
+dotconfig load -d dev -e CERT_PEM=server.pem
+
+# Embed multiple files
+dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
+```
+
+This adds a `#@dotconfig: files` section to the `.env`:
+
+```bash
+#@dotconfig: files
+CERT_PEM=LS0tLS1CRUdJTi...
+SSL_KEY=LS0tLS1CRUdJTi...
+```
+
+Notes:
+- The source file is resolved from `config/<deploy>/<filename>` — first-match
+  wins when deployments are stacked.
+- SOPS-encrypted sources are auto-decrypted before base64 encoding.
+- `dotconfig save` does **not** write the `files` section back to any source
+  file. The section is regenerated each time `load` runs with `-e`.
+- Incompatible with `--file`, `--json`, and `--yaml`.
 
 ### Adding a new deployment
 

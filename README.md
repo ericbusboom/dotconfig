@@ -152,6 +152,9 @@ QR_DOMAIN=http://192.168.1.40:5173/
 SOPS_AGE_KEY_FILE=/Users/ericbusboom/.config/sops/age/keys.txt
 
 #@dotconfig: secrets-local (ericbusboom)
+
+#@dotconfig: files
+CERT_PEM=LS0tLS1CRUdJTi...                  # optional — only when --embed is used
 ```
 
 **Last-write-wins**: when the file is shell-sourced (`set -a; . .env; set +a`),
@@ -161,6 +164,12 @@ override public.
 The `#@dotconfig:` markers are unique to dotconfig — do not use this prefix
 in your own comments.  The two metadata comments (`CONFIG_DEPLOY`,
 `CONFIG_LOCAL`) tell `dotconfig save` where to write each section back.
+
+The `#@dotconfig: files` section is present only when `--embed` / `-e` was
+passed to `load`. It holds base64-encoded file contents (for Docker / env-var
+consumers that need PEM / cert files as variables). It is regenerated on each
+`load` and is ignored by `dotconfig save` — it is never written back to any
+source file.
 
 ---
 
@@ -177,6 +186,8 @@ Options:
   -d, --deploy TEXT     Deployment / environment name (e.g. dev, prod).
   -l, --local TEXT      Local / developer name for personal overrides.
   -f, --file TEXT       Load a specific file instead of assembling .env.
+  -e, --embed VAR=FILE  Embed a deployment file as base64 in the .env
+                        under a 'files' section. Repeatable.
   -o, --output TEXT     Destination file.  [default: .env or the --file name]
   --stdout              Print to stdout instead of writing to a file.
   --config-dir TEXT     Root config directory.  [default: config]
@@ -200,10 +211,21 @@ dotconfig load -d dev --file app.yaml
 
 # Print a file to stdout (useful for agents / piping)
 dotconfig load -d dev --file app.yaml --stdout
+
+# Embed a PEM file as a base64 env var (Docker / env-var consumers)
+dotconfig load -d dev -e CERT_PEM=server.pem
+dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
 ```
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
 lives in one location only.
+
+When using `--embed` / `-e`, the named file is read from
+`config/<deploy>/<filename>` (auto-decrypted if SOPS-encrypted),
+base64-encoded, and written into a `#@dotconfig: files` section of the
+`.env`. The files section is regenerated on each load and is **not**
+written back to any source file by `dotconfig save`. Incompatible with
+`--file`, `--json`, and `--yaml`.
 
 **What it reads (without `--file`):**
 
