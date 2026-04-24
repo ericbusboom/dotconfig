@@ -705,6 +705,104 @@ class TestLoadConfigEmbedFiles:
         assert "#@dotconfig: files" in secret_text
         assert "#@dotconfig: files" not in public_text
 
+    def test_no_export_strips_export_prefix(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text(
+            "export APP_DOMAIN='example.com'\n"
+            "export PORT='3000'\n"
+        )
+
+        out = tmp_path / ".env"
+        load_config("prod", None, cfg, out, no_export=True)
+        text = out.read_text()
+
+        assert "export APP_DOMAIN" not in text
+        assert "APP_DOMAIN='example.com'" in text
+        assert "PORT='3000'" in text
+        # Metadata/markers preserved
+        assert "# CONFIG_DEPLOY=prod" in text
+        assert "#@dotconfig: public (prod)" in text
+
+    def test_no_export_default_false_preserves_export(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export APP_DOMAIN='example.com'\n")
+
+        out = tmp_path / ".env"
+        load_config("prod", None, cfg, out)
+        assert "export APP_DOMAIN='example.com'" in out.read_text()
+
+    def test_no_export_with_stdout(self, tmp_path, capsys):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export APP_DOMAIN='example.com'\n")
+
+        load_config("prod", None, cfg, None, to_stdout=True, no_export=True)
+        captured = capsys.readouterr().out
+        assert "export " not in captured
+        assert "APP_DOMAIN='example.com'" in captured
+
+    def test_no_export_with_split(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export APP_DOMAIN='example.com'\n")
+        (cfg / "prod" / "secrets.env").write_text(
+            "export SESSION_SECRET='abc123'\nsops_version=3.0\n"
+        )
+
+        out = tmp_path / ".env"
+        with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
+            load_config("prod", None, cfg, out, split=True, no_export=True)
+
+        public_text = out.read_text()
+        secret_text = (tmp_path / ".env.secret").read_text()
+
+        assert "export " not in public_text
+        assert "export " not in secret_text
+        assert "APP_DOMAIN='example.com'" in public_text
+        assert "SESSION_SECRET='abc123'" in secret_text
+
+    def test_no_export_only_strips_assignment_lines(self, tmp_path):
+        # Comments that happen to mention "export" should NOT be touched.
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text(
+            "# This line mentions export but isn't an assignment\n"
+            "export FOO=bar\n"
+            "NOT_AN_EXPORT=baz\n"
+        )
+
+        out = tmp_path / ".env"
+        load_config("prod", None, cfg, out, no_export=True)
+        text = out.read_text()
+
+        assert "# This line mentions export but isn't an assignment" in text
+        assert "FOO=bar" in text
+        assert "export FOO" not in text
+        assert "NOT_AN_EXPORT=baz" in text
+
+    def test_no_export_preserves_embed_files_section(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export APP=myapp\n")
+        (cfg / "prod" / "cert.pem").write_text("cert_content")
+
+        out = tmp_path / ".env"
+        load_config(
+            "prod", None, cfg, out,
+            no_export=True,
+            embed_files=("CERT_PEM=cert.pem",),
+        )
+        text = out.read_text()
+        import base64
+        b64 = base64.b64encode(b"cert_content").decode()
+
+        assert "export " not in text
+        assert "APP=myapp" in text
+        assert f"CERT_PEM={b64}" in text
+        assert "#@dotconfig: files" in text
+
     def test_embed_with_split_writes_secret_file_even_when_no_other_secrets(self, config_dir, tmp_path):
         # prod has no secrets.env, so the secret file is usually not written.
         # With --embed, the file must still appear.

@@ -241,6 +241,14 @@ def init(config_dir: str, quiet: bool) -> None:
     help="Embed a deployment file as base64 in a 'files' section of the .env. "
          "Format: VAR=filename. Repeatable.",
 )
+@click.option(
+    "--no-export",
+    is_flag=True,
+    default=False,
+    help="Strip the leading 'export ' prefix from assignment lines in the .env "
+         "output. Use when the consumer (e.g. docker stack deploy) requires "
+         "plain KEY=value lines rather than shell-sourceable exports.",
+)
 def load(
     names: Tuple[str, ...],
     deploy: str,
@@ -254,6 +262,7 @@ def load(
     flat: bool,
     split: bool,
     embed_files: Tuple[str, ...],
+    no_export: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -305,6 +314,10 @@ def load(
         raise click.UsageError("--embed cannot be used with --json or --yaml")
     if embed_files and filename:
         raise click.UsageError("--embed cannot be used with --file")
+    if no_export and (use_json or use_yaml):
+        raise click.UsageError("--no-export cannot be used with --json or --yaml")
+    if no_export and filename:
+        raise click.UsageError("--no-export cannot be used with --file")
 
     cfg = Path(config_dir)
 
@@ -382,6 +395,7 @@ def load(
             flat=flat,
             split=split,
             embed_files=embed_files,
+            no_export=no_export,
         )
 
 

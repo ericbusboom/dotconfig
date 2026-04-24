@@ -70,6 +70,7 @@ With `--file`: retrieves a single file from the config vault.
 - `-l/--local` — developer name for local overrides (`.env` mode) or local files (`--file` mode)
 - `--file` — retrieve a specific file instead of assembling `.env`; requires `-d` or `-l` (not both)
 - `--embed` / `-e` — embed a deployment file as base64 inside the assembled `.env` under a dedicated `files` section. Repeatable. Format: `VAR=filename`. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
+- `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Use when the consumer (`docker stack deploy`, some env-file parsers) rejects shell-style `export` prefixes. Metadata comments and section markers are preserved. Incompatible with `--file`, `--json`, `--yaml`. Note: `save` does not re-add the `export` prefix when writing back to source files — if your source files use `export`, a round-trip through `--no-export` loses that style.
 - `--stdout` — print to stdout instead of writing to a file
 - `--output` / `-o` — write to a specific path instead of the default
 
@@ -89,6 +90,10 @@ dotconfig load -l alice --file settings.json        # from Alice's local dir
 # Embed deployment files as base64 inside the .env (Docker/env-var workflows)
 dotconfig load -d dev -e CERT_PEM=server.pem                      # one file
 dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key   # multiple
+
+# Strip `export` prefix for parsers that reject shell-style assignments
+# (e.g. `docker stack deploy`).
+dotconfig load -d prod --no-export -o .env
 ```
 
 ### `dotconfig save`
@@ -279,6 +284,29 @@ dotconfig load -d dev --file app.yaml --stdout
 # Save a JSON file into a local directory
 dotconfig save -l alice --file settings.json
 ```
+
+### Generating a `.env` for `docker stack deploy` / strict env-file parsers
+
+`docker compose up` tolerates shell-style `export KEY=value` lines, but
+`docker stack deploy -c <compose.yml>` and some other env-file parsers
+reject them because they read `export KEY` as a key name containing
+whitespace. For those consumers, pass `--no-export`:
+
+```bash
+# Output is plain KEY=value — compatible with docker stack deploy env_file:
+dotconfig load -d prod --no-export -o .env
+```
+
+Notes:
+- Metadata comments (`# CONFIG_DEPLOY=…`) and section markers
+  (`#@dotconfig: …`) are preserved — they aren't assignments.
+- Embedded files (`-e`) are already written without the `export` prefix,
+  so they're unaffected.
+- Round-trip caveat: `dotconfig save` writes section bodies verbatim,
+  so it will **not** re-add the `export` prefix to source files. If your
+  source files in `config/<deploy>/` use `export`, a load-edit-save cycle
+  with `--no-export` strips that style permanently. Safe when sources use
+  plain `KEY=value`; be intentional otherwise.
 
 ### Embedding files as env vars (Docker / PEM / cert use case)
 

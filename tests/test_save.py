@@ -1027,3 +1027,51 @@ class TestSaveConfigSopsConfig:
         assert mock_run.called
         cmd = mock_run.call_args[0][0]
         assert "--config" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# save_config — round-trip of --no-export output
+# ---------------------------------------------------------------------------
+
+class TestSaveConfigNoExportRoundTrip:
+    """Verify save accepts a .env produced with --no-export without errors.
+
+    Note: save writes section bodies verbatim, so the ``export`` prefix is
+    *not* re-added to source files when round-tripping. Values round-trip
+    correctly; the export-style does not.
+    """
+
+    def test_save_accepts_no_export_env_without_error(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP_DOMAIN=example.com\n"
+            "PORT=3000\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=abc123\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+
+        public = (config_dir / "dev" / "public.env").read_text()
+        assert "APP_DOMAIN=example.com" in public
+        assert "PORT=3000" in public
+        # No export prefix present (wasn't in the .env to begin with)
+        assert "export " not in public
+
+    def test_save_values_correct_after_no_export_roundtrip(self, env_file, config_dir):
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP_DOMAIN=edited.example.com\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=new-secret\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+        assert "APP_DOMAIN=edited.example.com" in (config_dir / "dev" / "public.env").read_text()
+        assert "SESSION_SECRET=new-secret" in (config_dir / "dev" / "secrets.env").read_text()

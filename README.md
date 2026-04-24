@@ -188,6 +188,9 @@ Options:
   -f, --file TEXT       Load a specific file instead of assembling .env.
   -e, --embed VAR=FILE  Embed a deployment file as base64 in the .env
                         under a 'files' section. Repeatable.
+  --no-export           Strip the leading 'export ' prefix from assignment
+                        lines.  Use for parsers that reject shell-style
+                        exports (e.g. docker stack deploy).
   -o, --output TEXT     Destination file.  [default: .env or the --file name]
   --stdout              Print to stdout instead of writing to a file.
   --config-dir TEXT     Root config directory.  [default: config]
@@ -215,6 +218,9 @@ dotconfig load -d dev --file app.yaml --stdout
 # Embed a PEM file as a base64 env var (Docker / env-var consumers)
 dotconfig load -d dev -e CERT_PEM=server.pem
 dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
+
+# Plain KEY=value output (no `export` prefix) for docker stack deploy
+dotconfig load -d prod --no-export -o .env
 ```
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
@@ -227,6 +233,16 @@ base64-encoded, and written into a `#@dotconfig: files` section of the
 written back to any source file by `dotconfig save`. With `--split`,
 embedded files are written to the `.env.secret` companion (they are
 treated as secrets). Incompatible with `--file`, `--json`, and `--yaml`.
+
+When using `--no-export`, leading `export ` prefixes are stripped from
+assignment lines in the `.env` output. This is required by `docker stack
+deploy` (Swarm) and some other env-file parsers that reject shell-style
+`export` prefixes; `docker compose up` accepts both forms. Metadata
+comments and section markers are preserved. `dotconfig save` does **not**
+re-add the `export` prefix when writing back to source files, so a
+load-edit-save round-trip through `--no-export` permanently strips the
+`export` style from the source files. Incompatible with `--file`,
+`--json`, and `--yaml`.
 
 **What it reads (without `--file`):**
 

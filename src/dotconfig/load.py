@@ -377,6 +377,25 @@ def _split_path(dest: Path) -> Path:
     return dest.with_name(f"{dest.stem}.secret{dest.suffix}")
 
 
+def _strip_export_prefix(text: str) -> str:
+    """Remove leading 'export ' from assignment lines in *text*.
+
+    Blank lines, comment lines, and lines that don't start with 'export '
+    are returned unchanged. Leading whitespace before 'export ' is preserved.
+    """
+    if not text:
+        return text
+    out_lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("export "):
+            indent = line[: len(line) - len(stripped)]
+            out_lines.append(indent + stripped[len("export "):])
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines)
+
+
 def _embed_files_section(
     mappings: tuple,
     deploy_dirs: List[Path],
@@ -432,6 +451,7 @@ def load_config(
     flat: bool = False,
     split: bool = False,
     embed_files: tuple = (),
+    no_export: bool = False,
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
@@ -550,6 +570,10 @@ def load_config(
 
             default_output = Path(".env")
 
+            if no_export:
+                public_assembled = _strip_export_prefix(public_assembled)
+                secrets_assembled = _strip_export_prefix(secrets_assembled)
+
         dest = output if output else default_output
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(public_assembled)
@@ -646,6 +670,8 @@ def load_config(
             parts.pop()
 
         assembled = "\n".join(parts) + "\n"
+        if no_export:
+            assembled = _strip_export_prefix(assembled)
         default_output = Path(".env")
 
         if to_stdout:
