@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from .audit import _key_looks_secret
-from .load import _env_lines_to_dict
+from .load import _add_export_prefix, _env_lines_to_dict
 from .output import error, heading, info, ok, warn
 
 
@@ -239,30 +239,6 @@ def _rewrite_deployment(body: str, target_deployment: str) -> str:
         if line.startswith("DEPLOYMENT="):
             lines[i] = f"DEPLOYMENT={target_deployment}"
     return "\n".join(lines)
-
-
-def _add_export_prefix(text: str) -> str:
-    """Prepend 'export ' to KEY=value lines that don't already have it.
-
-    Blank lines, comment lines, lines already starting with 'export ', and
-    lines without '=' are returned unchanged. Leading whitespace is preserved.
-    """
-    if not text:
-        return text
-    out_lines = []
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if (
-            not stripped
-            or stripped.startswith("#")
-            or stripped.startswith("export ")
-            or "=" not in stripped
-        ):
-            out_lines.append(line)
-        else:
-            indent = line[: len(line) - len(stripped)]
-            out_lines.append(indent + "export " + stripped)
-    return "\n".join(out_lines)
 
 
 def _extract_age_recipients(sops_config: Optional[Path]) -> Optional[str]:

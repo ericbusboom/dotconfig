@@ -782,6 +782,29 @@ class TestLoadConfigEmbedFiles:
         assert "export FOO" not in text
         assert "NOT_AN_EXPORT=baz" in text
 
+    def test_add_export_adds_prefix_to_plain_source(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("APP=myapp\nPORT=3000\n")
+
+        out = tmp_path / ".env"
+        load_config("prod", None, cfg, out, add_export=True)
+        text = out.read_text()
+        assert "export APP=myapp" in text
+        assert "export PORT=3000" in text
+
+    def test_add_export_does_not_double_up(self, tmp_path):
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export APP=myapp\nPORT=3000\n")
+
+        out = tmp_path / ".env"
+        load_config("prod", None, cfg, out, add_export=True)
+        text = out.read_text()
+        assert "export export" not in text
+        assert "export APP=myapp" in text
+        assert "export PORT=3000" in text
+
     def test_no_export_preserves_embed_files_section(self, tmp_path):
         cfg = tmp_path / "config"
         (cfg / "prod").mkdir(parents=True)

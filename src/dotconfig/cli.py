@@ -246,8 +246,19 @@ def init(config_dir: str, quiet: bool) -> None:
     is_flag=True,
     default=False,
     help="Strip the leading 'export ' prefix from assignment lines in the .env "
-         "output. Use when the consumer (e.g. docker stack deploy) requires "
-         "plain KEY=value lines rather than shell-sourceable exports.",
+         "output. Implied by -S/--stdout (since piped consumers usually don't "
+         "want shell-style exports). Use when the consumer (e.g. docker stack "
+         "deploy) requires plain KEY=value lines rather than shell-sourceable "
+         "exports.",
+)
+@click.option(
+    "--add-export",
+    is_flag=True,
+    default=False,
+    help="Ensure every assignment line in the .env output has an 'export ' "
+         "prefix. Use to override the implicit --no-export behavior of "
+         "-S/--stdout, or to normalize source files that mix prefixed and "
+         "plain assignments.",
 )
 def load(
     names: Tuple[str, ...],
@@ -263,6 +274,7 @@ def load(
     split: bool,
     embed_files: Tuple[str, ...],
     no_export: bool,
+    add_export: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -318,6 +330,18 @@ def load(
         raise click.UsageError("--no-export cannot be used with --file")
     # --no-export with --json/--yaml is a silent no-op: structured output
     # doesn't carry the `export ` prefix, so there's nothing to strip.
+    if no_export and add_export:
+        raise click.UsageError("--no-export and --add-export are mutually exclusive")
+    if add_export and filename:
+        raise click.UsageError("--add-export cannot be used with --file")
+    # --add-export with --json/--yaml is a silent no-op (same reason as
+    # --no-export): structured output doesn't carry the `export ` prefix.
+
+    # -S/--stdout implies --no-export unless --add-export is explicitly set.
+    # Piped consumers (jq, docker stack deploy, ...) usually reject the
+    # shell-style `export ` prefix; the explicit override stays available.
+    if to_stdout and not add_export and not no_export:
+        no_export = True
 
     cfg = Path(config_dir)
 
@@ -396,6 +420,7 @@ def load(
             split=split,
             embed_files=embed_files,
             no_export=no_export,
+            add_export=add_export,
         )
 
 

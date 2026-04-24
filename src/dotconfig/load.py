@@ -400,6 +400,30 @@ def _strip_export_prefix(text: str) -> str:
     return "\n".join(out_lines)
 
 
+def _add_export_prefix(text: str) -> str:
+    """Prepend 'export ' to KEY=value lines that don't already have it.
+
+    Blank lines, comment lines, lines already starting with 'export ', and
+    lines without '=' are returned unchanged. Leading whitespace is preserved.
+    """
+    if not text:
+        return text
+    out_lines = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith("export ")
+            or "=" not in stripped
+        ):
+            out_lines.append(line)
+        else:
+            indent = line[: len(line) - len(stripped)]
+            out_lines.append(indent + "export " + stripped)
+    return "\n".join(out_lines)
+
+
 def _embed_files_section(
     mappings: tuple,
     deploy_dirs: List[Path],
@@ -456,6 +480,7 @@ def load_config(
     split: bool = False,
     embed_files: tuple = (),
     no_export: bool = False,
+    add_export: bool = False,
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
@@ -577,6 +602,9 @@ def load_config(
             if no_export:
                 public_assembled = _strip_export_prefix(public_assembled)
                 secrets_assembled = _strip_export_prefix(secrets_assembled)
+            elif add_export:
+                public_assembled = _add_export_prefix(public_assembled)
+                secrets_assembled = _add_export_prefix(secrets_assembled)
 
         dest = output if output else default_output
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -676,6 +704,8 @@ def load_config(
         assembled = "\n".join(parts) + "\n"
         if no_export:
             assembled = _strip_export_prefix(assembled)
+        elif add_export:
+            assembled = _add_export_prefix(assembled)
         default_output = Path(".env")
 
         if to_stdout:

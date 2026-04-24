@@ -70,8 +70,9 @@ With `--file`: retrieves a single file from the config vault.
 - `-l/--local` — developer name for local overrides (`.env` mode) or local files (`--file` mode)
 - `--file` — retrieve a specific file instead of assembling `.env`; requires `-d` or `-l` (not both)
 - `--embed` / `-e` — embed a deployment file as base64 inside the assembled `.env` under a dedicated `files` section. Repeatable. Format: `VAR=filename`. Auto-decrypts SOPS-encrypted sources. Incompatible with `--file`, `--json`, `--yaml`.
-- `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Use when the consumer (`docker stack deploy`, some env-file parsers) rejects shell-style `export` prefixes. Metadata comments and section markers are preserved. Incompatible with `--file`, `--json`, `--yaml`. To round-trip source files that use `export ` through a `--no-export` load, pair with `save --add-export` so the prefix is re-added when writing back.
-- `--stdout` — print to stdout instead of writing to a file
+- `--no-export` — strip the leading `export ` prefix from assignment lines so the output parses as plain `KEY=value` lines. Implied by `-S/--stdout` (piped consumers usually reject shell-style exports). Metadata comments and section markers are preserved. Incompatible with `--file`. To round-trip source files that use `export ` through a `--no-export` load, pair with `save --add-export` so the prefix is re-added when writing back.
+- `--add-export` — ensure every assignment line in the `.env` output has an `export ` prefix (no double-up if the source already has it). Use to override the implicit `--no-export` behavior of `-S/--stdout`, or to normalize source files that mix prefixed and plain assignments. Mutually exclusive with `--no-export`.
+- `--stdout` / `-S` — print to stdout instead of writing to a file. **Implies `--no-export`** unless `--add-export` is passed.
 - `--output` / `-o` — write to a specific path instead of the default
 
 **Examples:**
@@ -94,6 +95,12 @@ dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key   # multiple
 # Strip `export` prefix for parsers that reject shell-style assignments
 # (e.g. `docker stack deploy`).
 dotconfig load -d prod --no-export -o .env
+
+# -S/--stdout already implies --no-export — pipe-friendly by default
+dotconfig load -d prod -S | jq .
+
+# Override the stdout default to keep the export prefix
+dotconfig load -d prod -S --add-export
 ```
 
 ### `dotconfig save`

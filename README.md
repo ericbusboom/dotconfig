@@ -189,10 +189,15 @@ Options:
   -e, --embed VAR=FILE  Embed a deployment file as base64 in the .env
                         under a 'files' section. Repeatable.
   --no-export           Strip the leading 'export ' prefix from assignment
-                        lines.  Use for parsers that reject shell-style
-                        exports (e.g. docker stack deploy).
+                        lines.  Implied by -S/--stdout.  Use for parsers
+                        that reject shell-style exports (e.g. docker
+                        stack deploy).
+  --add-export          Ensure every assignment line has an 'export '
+                        prefix.  Use to override -S/--stdout's implicit
+                        --no-export.  Mutually exclusive with --no-export.
   -o, --output TEXT     Destination file.  [default: .env or the --file name]
-  --stdout              Print to stdout instead of writing to a file.
+  -S, --stdout          Print to stdout instead of writing to a file.
+                        Implies --no-export unless --add-export is set.
   --config-dir TEXT     Root config directory.  [default: config]
   --help                Show this message and exit.
 ```
@@ -221,6 +226,12 @@ dotconfig load -d dev -e CERT_PEM=server.pem -e SSL_KEY=ssl.key
 
 # Plain KEY=value output (no `export` prefix) for docker stack deploy
 dotconfig load -d prod --no-export -o .env
+
+# -S/--stdout is pipe-friendly by default (implicit --no-export)
+dotconfig load -d prod -S | jq .
+
+# Keep the export prefix on stdout when you really want to source it
+dotconfig load -d prod -S --add-export
 ```
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
@@ -240,8 +251,14 @@ deploy` (Swarm) and some other env-file parsers that reject shell-style
 `export` prefixes; `docker compose up` accepts both forms. Metadata
 comments and section markers are preserved. To round-trip source files
 that use `export KEY=value`, pair with `save --add-export` so the
-prefix is restored when writing back. Incompatible with `--file`,
-`--json`, and `--yaml`.
+prefix is restored when writing back. Incompatible with `--file`.
+
+`-S`/`--stdout` implies `--no-export` by default — piped consumers like
+`jq`, `docker stack deploy`, and most env-file parsers reject the shell
+`export` prefix, so the pipe-friendly form is the right default. Pass
+`--add-export` alongside `-S` to keep the prefix when you do want a
+shell-sourceable stdout dump. `--no-export` and `--add-export` are
+mutually exclusive.
 
 **What it reads (without `--file`):**
 

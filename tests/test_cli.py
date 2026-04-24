@@ -386,3 +386,56 @@ class TestSaveCliPositional:
         import json
         data = json.loads(result.output)
         assert data == {"FOO": "bar"}
+
+    def test_stdout_implies_no_export(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["load", "prod", "-S", "-c", str(cfg)])
+        assert result.exit_code == 0, result.output
+        assert "export " not in result.output
+        assert "FOO=bar" in result.output
+
+    def test_stdout_with_add_export_keeps_prefix(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-S", "--add-export", "-c", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "export FOO=bar" in result.output
+
+    def test_file_output_default_keeps_export(self, tmp_path, monkeypatch):
+        """No --stdout: file output preserves source style by default
+        (no implicit transform)."""
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "-o", str(tmp_path / ".env"), "-c", str(cfg)]
+        )
+        assert result.exit_code == 0, result.output
+        assert "export FOO=bar" in (tmp_path / ".env").read_text()
+
+    def test_no_export_and_add_export_mutually_exclusive(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = tmp_path / "config"
+        (cfg / "prod").mkdir(parents=True)
+        (cfg / "prod" / "public.env").write_text("FOO=bar\n")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["load", "prod", "--no-export", "--add-export", "-c", str(cfg)]
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output.lower()
