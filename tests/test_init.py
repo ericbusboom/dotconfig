@@ -9,7 +9,7 @@ import pytest
 from dotconfig.init import (
     _AGENTS_MD_CONTENT,
     _GITIGNORE_PATTERNS,
-    _add_key_to_sops_yaml,
+    _collect_age_keys,
     _create_env_if_missing,
     _derive_public_key,
     _discover_age_key,
@@ -19,6 +19,7 @@ from dotconfig.init import (
     _init_env_files,
     _is_age_installed,
     _read_key_from_file,
+    _render_sops_yaml,
     _update_gitignore,
     _update_sops_yaml,
     _write_agents_md,
@@ -151,67 +152,97 @@ class TestDerivePublicKey:
 
 
 # ---------------------------------------------------------------------------
-# _add_key_to_sops_yaml
+# _collect_age_keys
 # ---------------------------------------------------------------------------
 
-class TestAddKeyToSopsYaml:
-    BLOCK_SCALAR_CONTENT = (
-        "creation_rules:\n"
-        "  - path_regex: config/secrets/.+\\.env$\n"
-        "    age: >-\n"
-        "      age1existing1234,\n"
-    )
+class TestCollectAgeKeys:
+    def test_empty_content(self):
+        assert _collect_age_keys("") == []
 
-    INLINE_CONTENT = (
-        "creation_rules:\n"
-        "  - path_regex: config/secrets/.+\\.env$\n"
-        "    age: age1existing1234\n"
-    )
+    def test_no_creation_rules(self):
+        assert _collect_age_keys("other: stuff\n") == []
 
-    def test_key_appended_to_block_scalar(self):
-        result = _add_key_to_sops_yaml(self.BLOCK_SCALAR_CONTENT, FAKE_PUBLIC_KEY)
-        assert FAKE_PUBLIC_KEY in result
-
-    def test_existing_key_gets_trailing_comma_in_block_scalar(self):
+    def test_block_scalar_single_key(self):
         content = (
             "creation_rules:\n"
-            "  - path_regex: config/secrets/.+\\.env$\n"
+            "  - path_regex: '.+'\n"
             "    age: >-\n"
-            "      age1existing1234\n"
+            "      age1abc\n"
         )
-        result = _add_key_to_sops_yaml(content, FAKE_PUBLIC_KEY)
-        assert "age1existing1234," in result
-        assert FAKE_PUBLIC_KEY in result
+        assert _collect_age_keys(content) == ["age1abc"]
 
-    def test_key_appended_to_inline_value(self):
-        result = _add_key_to_sops_yaml(self.INLINE_CONTENT, FAKE_PUBLIC_KEY)
-        assert FAKE_PUBLIC_KEY in result
-
-    def test_new_key_appears_after_existing_key(self):
-        result = _add_key_to_sops_yaml(self.BLOCK_SCALAR_CONTENT, FAKE_PUBLIC_KEY)
-        idx_existing = result.index("age1existing1234")
-        idx_new = result.index(FAKE_PUBLIC_KEY)
-        assert idx_existing < idx_new
-
-    def test_key_inserted_when_age_field_empty(self):
+    def test_block_scalar_multiple_keys(self):
         content = (
             "creation_rules:\n"
-            "  - path_regex: .+/secrets\\.env$\n"
-            "    age:\n"
+            "  - path_regex: '.+'\n"
+            "    age: >-\n"
+            "      age1abc,\n"
+            "      age1def\n"
         )
-        result = _add_key_to_sops_yaml(content, FAKE_PUBLIC_KEY)
-        assert FAKE_PUBLIC_KEY in result
-        assert "age: >-" in result
+        assert _collect_age_keys(content) == ["age1abc", "age1def"]
 
-    def test_key_inserted_when_age_field_empty_with_trailing_space(self):
+    def test_inline_age(self):
         content = (
             "creation_rules:\n"
-            "  - path_regex: .+/secrets\\.env$\n"
-            "    age: \n"
+            "  - path_regex: '.+'\n"
+            "    age: age1abc\n"
         )
-        result = _add_key_to_sops_yaml(content, FAKE_PUBLIC_KEY)
-        assert FAKE_PUBLIC_KEY in result
-        assert "age: >-" in result
+        assert _collect_age_keys(content) == ["age1abc"]
+
+    def test_collects_across_rules_and_dedupes(self):
+        content = (
+            "creation_rules:\n"
+            "  - path_regex: 'a'\n"
+            "    age: age1abc\n"
+            "  - path_regex: 'b'\n"
+            "    age: >-\n"
+            "      age1abc,\n"
+            "      age1def\n"
+            "  - path_regex: 'c'\n"
+            "    age: age1ghi\n"
+        )
+        assert _collect_age_keys(content) == ["age1abc", "age1def", "age1ghi"]
+
+    def test_skips_rule_with_no_age(self):
+        content = (
+            "creation_rules:\n"
+            "  - path_regex: '(^|/)public\\.env$'\n"
+            "  - path_regex: '.+'\n"
+            "    age: age1abc\n"
+        )
+        assert _collect_age_keys(content) == ["age1abc"]
+
+
+# ---------------------------------------------------------------------------
+# _render_sops_yaml
+# ---------------------------------------------------------------------------
+
+class TestRenderSopsYaml:
+    def test_emits_two_rules(self):
+        out = _render_sops_yaml(["age1abc"])
+        assert "(^|/)public\\.env$" in out
+        assert "path_regex: '.+'" in out
+
+    def test_public_rule_has_no_age(self):
+        out = _render_sops_yaml(["age1abc"])
+        # The public.env rule line is followed immediately by the catch-all
+        # rule, with no `age:` between them.
+        public_idx = out.index("public")
+        catchall_idx = out.index(".+")
+        between = out[public_idx:catchall_idx]
+        assert "age:" not in between
+
+    def test_keys_render_with_trailing_commas_except_last(self):
+        out = _render_sops_yaml(["age1abc", "age1def", "age1ghi"])
+        assert "age1abc," in out
+        assert "age1def," in out
+        # Last key has no trailing comma
+        assert "age1ghi\n" in out
+
+    def test_round_trips_through_collect(self):
+        keys = ["age1abc", "age1def"]
+        out = _render_sops_yaml(keys)
+        assert _collect_age_keys(out) == keys
 
 
 # ---------------------------------------------------------------------------
@@ -227,18 +258,14 @@ class TestUpdateSopsYaml:
         assert FAKE_PUBLIC_KEY in content
         assert "creation_rules" in content
 
-    def test_created_file_contains_path_regex(self, tmp_path):
+    def test_created_file_uses_canonical_two_rule_form(self, tmp_path):
         _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
         content = (tmp_path / "sops.yaml").read_text()
-        assert ".+/secrets" in content
+        assert "(^|/)public\\.env$" in content
+        assert "path_regex: '.+'" in content
 
-    def test_does_not_overwrite_when_key_already_listed(self, tmp_path):
-        existing = (
-            "creation_rules:\n"
-            "  - path_regex: config/.+/secrets\\.env$\n"
-            "    age: >-\n"
-            f"      {FAKE_PUBLIC_KEY}\n"
-        )
+    def test_does_not_overwrite_when_already_canonical(self, tmp_path):
+        existing = _render_sops_yaml([FAKE_PUBLIC_KEY])
         sops_yaml = tmp_path / "sops.yaml"
         sops_yaml.write_text(existing)
         original_mtime = sops_yaml.stat().st_mtime_ns
@@ -258,6 +285,41 @@ class TestUpdateSopsYaml:
         content = (tmp_path / "sops.yaml").read_text()
         assert "age1otherkey" in content
         assert FAKE_PUBLIC_KEY in content
+
+    def test_migrates_legacy_three_rule_layout_preserving_keys(self, tmp_path):
+        """An existing 3-rule sops.yaml is rewritten as the canonical 2-rule
+        form, with all age keys from every rule unioned into the catch-all."""
+        existing = (
+            "creation_rules:\n"
+            "  - path_regex: '.+\\.secrets\\..+$'\n"
+            "    age: >-\n"
+            "      age1team1,\n"
+            "      age1team2\n"
+            "  - path_regex: '.+/secrets\\..+$'\n"
+            "    age: age1team1\n"
+            "  - path_regex: '.+'\n"
+            "    age: >-\n"
+            "      age1team3\n"
+        )
+        (tmp_path / "sops.yaml").write_text(existing)
+        _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
+        content = (tmp_path / "sops.yaml").read_text()
+        # Now in canonical form
+        assert "(^|/)public\\.env$" in content
+        # All preserved
+        for key in ("age1team1", "age1team2", "age1team3", FAKE_PUBLIC_KEY):
+            assert key in content
+        # And only one rule has age
+        keys = _collect_age_keys(content)
+        assert keys == ["age1team1", "age1team2", "age1team3", FAKE_PUBLIC_KEY]
+
+    def test_refresh_idempotent_when_only_new_key_added(self, tmp_path):
+        """Running init twice with the same key produces an idempotent file."""
+        _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
+        first = (tmp_path / "sops.yaml").read_text()
+        _update_sops_yaml(tmp_path, FAKE_PUBLIC_KEY)
+        second = (tmp_path / "sops.yaml").read_text()
+        assert first == second
 
 
 # ---------------------------------------------------------------------------

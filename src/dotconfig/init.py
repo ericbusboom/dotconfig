@@ -16,21 +16,22 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
+
+import yaml
 
 from .output import created, error, heading, info, ok, updated, warn
 
-# Path regex used in sops.yaml creation_rules.
-# Matches secrets.env (and other extensions) under any subdirectory.
-# Because sops.yaml lives inside config/, sops resolves file paths relative
-# to the config file's directory — so the regex must NOT include a "config/"
-# prefix.
-# Matches secrets companion files (secrets.env, app.secrets.yaml, etc.)
-_SOPS_SECRETS_REGEX = r".+\.secrets\.(?:env|json|yaml|yml|txt|conf)$"
-# Matches legacy secrets.env files
-_SOPS_LEGACY_REGEX = r".+/secrets\.(?:env|json|yaml|yml|txt|conf)$"
-# Catch-all for any file dotconfig encrypts under config/
-_SOPS_CATCHALL_REGEX = r".+"
+# Path regexes used in sops.yaml creation_rules.
+# sops resolves paths relative to the sops.yaml's directory, so these
+# patterns must NOT include a "config/" prefix. SOPS uses Go's RE2, which
+# has no lookahead — so we exclude `public.env` via a separate first rule
+# (no age recipients) rather than baking the negation into one regex.
+# First rule: matches `public.env` anywhere under the tree. No age keys
+# means SOPS won't encrypt these files (and dotconfig never asks it to).
+_SOPS_PUBLIC_PATH_REGEX = r"(^|/)public\.env$"
+# Second rule: catch-all for everything dotconfig submits to sops.
+_SOPS_ENCRYPT_PATH_REGEX = r".+"
 
 # Matches a valid age secret key line.
 _AGE_SECRET_KEY_RE = re.compile(r"^AGE-SECRET-KEY-[A-Za-z0-9]+$")
@@ -158,133 +159,109 @@ def _derive_public_key(secret_key: str) -> Optional[str]:
         return None
 
 
-def _add_key_to_sops_yaml(content: str, public_key: str) -> str:
-    """Return *content* with *public_key* appended to the ``age:`` block.
+def _collect_age_keys(content: str) -> List[str]:
+    """Return all age public keys found in a sops.yaml *content*, in order.
 
-    Handles two common formats:
-
-    Block scalar (most common)::
-
-        age: >-
-          age1abc...,
-          age1def...
-
-    Inline value::
-
-        age: age1abc...
+    Walks every entry under ``creation_rules`` and unions their ``age:``
+    values, regardless of which rule they appeared in. Accepts the
+    block-scalar (comma-separated), inline string, and YAML list forms.
+    Duplicates are dropped, preserving first-seen order.
     """
-    lines = content.splitlines()
-    result: list[str] = []
-    i = 0
-    inserted = False
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    rules = data.get("creation_rules") or []
+    if not isinstance(rules, list):
+        return []
 
-    while i < len(lines):
-        line = lines[i]
-
-        # ---- "age: >-" block scalar format --------------------------------
-        if re.match(r"^\s+age:\s*>-\s*$", line):
-            result.append(line)
-            i += 1
-            key_lines: list[str] = []
-            key_indent: Optional[int] = None
-
-            # Collect all age key value lines that immediately follow
-            while i < len(lines):
-                peek = lines[i]
-                stripped = peek.strip()
-                if stripped and re.match(r"age1", stripped.lstrip(",")):
-                    if key_indent is None:
-                        key_indent = len(peek) - len(peek.lstrip())
-                    key_lines.append(peek)
-                    i += 1
-                else:
-                    break
-
-            if key_lines:
-                # Ensure the last existing key ends with a comma
-                last = key_lines[-1].rstrip()
-                if not last.endswith(","):
-                    last += ","
-                key_lines[-1] = last
-                result.extend(key_lines)
-                indent = key_indent if key_indent is not None else 6
-            else:
-                indent = 6
-
-            result.append(" " * indent + public_key)
-            inserted = True
+    keys: List[str] = []
+    seen: set = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
             continue
-
-        # ---- "age: age1..." inline format ---------------------------------
-        if re.match(r"^\s+age:\s+age1", line):
-            stripped = line.rstrip()
-            if not stripped.endswith(","):
-                stripped += ","
-            result.append(stripped + public_key)
-            inserted = True
-            i += 1
+        age = rule.get("age")
+        if not age:
             continue
+        candidates: List[str] = []
+        if isinstance(age, str):
+            candidates = re.split(r"[,\s]+", age.strip())
+        elif isinstance(age, list):
+            for item in age:
+                if isinstance(item, str):
+                    candidates.extend(re.split(r"[,\s]+", item.strip()))
+        for c in candidates:
+            c = c.strip().rstrip(",")
+            if c.startswith("age1") and c not in seen:
+                seen.add(c)
+                keys.append(c)
+    return keys
 
-        # ---- "age:" with empty/missing value --------------------------------
-        if re.match(r"^\s+age:\s*$", line):
-            indent = len(line) - len(line.lstrip())
-            result.append(" " * indent + "age: >-")
-            result.append(" " * (indent + 2) + public_key)
-            inserted = True
-            i += 1
-            continue
 
-        result.append(line)
-        i += 1
+def _render_sops_yaml(age_keys: List[str]) -> str:
+    """Render the canonical two-rule sops.yaml.
 
-    if not inserted:
-        result.append(
-            f"# dotconfig init: please add {public_key} to the age: field in sops.yaml"
-        )
-
-    return "\n".join(result) + "\n"
+    Rule 1 matches ``public.env`` and has no recipients (sops will refuse
+    to encrypt files matching it — but dotconfig never asks it to).
+    Rule 2 is the catch-all, holding every age recipient key in a single
+    block-scalar list.
+    """
+    lines = [
+        "creation_rules:",
+        f"  - path_regex: '{_SOPS_PUBLIC_PATH_REGEX}'",
+        f"  - path_regex: '{_SOPS_ENCRYPT_PATH_REGEX}'",
+        "    age: >-",
+    ]
+    for i, key in enumerate(age_keys):
+        suffix = "," if i < len(age_keys) - 1 else ""
+        lines.append(f"      {key}{suffix}")
+    return "\n".join(lines) + "\n"
 
 
 def _update_sops_yaml(config_dir: Path, public_key: str, quiet: bool = False) -> None:
-    """Create or update ``sops.yaml`` in *config_dir* with *public_key*.
+    """Create or refresh ``sops.yaml`` in *config_dir* with *public_key*.
 
-    * If ``sops.yaml`` does not exist, a new file is created with a default
-      ``creation_rules`` block covering ``config/secrets/``.
-    * If it already exists and the key is already listed, nothing is changed.
-    * Otherwise the key is appended to the ``age:`` list.
+    Always rewrites the file in canonical two-rule form (a no-op
+    ``public.env`` rule plus a ``.+`` catch-all). Existing age recipients
+    from any prior rule layout are collected into the catch-all so keys
+    are never lost across init runs. If the canonical content is already
+    on disk, the file is left untouched (preserving mtime).
     """
     sops_yaml = config_dir / "sops.yaml"
 
-    if not sops_yaml.exists():
-        content = (
-            "creation_rules:\n"
-            f"  - path_regex: '{_SOPS_SECRETS_REGEX}'\n"
-            "    age: >-\n"
-            f"      {public_key}\n"
-            f"  - path_regex: '{_SOPS_LEGACY_REGEX}'\n"
-            "    age: >-\n"
-            f"      {public_key}\n"
-            f"  - path_regex: '{_SOPS_CATCHALL_REGEX}'\n"
-            "    age: >-\n"
-            f"      {public_key}\n"
-        )
-        sops_yaml.write_text(content)
+    if sops_yaml.exists():
+        existing = sops_yaml.read_text()
+        keys = _collect_age_keys(existing)
+        had_key = public_key in keys
+    else:
+        existing = None
+        keys = []
+        had_key = False
+
+    if public_key not in keys:
+        keys.append(public_key)
+
+    new_content = _render_sops_yaml(keys)
+
+    if existing == new_content:
         if not quiet:
-            created(f"{sops_yaml}")
-            info(f"added public key {public_key}")
+            ok(f"{sops_yaml} (already up to date)")
         return
 
-    existing = sops_yaml.read_text()
-    if public_key in existing:
-        if not quiet:
-            ok(f"{sops_yaml} (key already listed)")
+    sops_yaml.write_text(new_content)
+    if quiet:
         return
-
-    updated_content = _add_key_to_sops_yaml(existing, public_key)
-    sops_yaml.write_text(updated_content)
-    if not quiet:
-        updated(f"{sops_yaml}")
+    if existing is None:
+        created(f"{sops_yaml}")
         info(f"added public key {public_key}")
+    else:
+        updated(f"{sops_yaml}")
+        if had_key:
+            info(f"refreshed creation_rules (preserved {len(keys)} key(s))")
+        else:
+            info(f"added public key {public_key}")
 
 
 _AGENTS_MD_CONTENT = """\

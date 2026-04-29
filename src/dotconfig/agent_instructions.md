@@ -255,8 +255,24 @@ Deployment names are open-ended — any valid directory name works.
   ```bash
   SOPS_CONFIG=config/sops.yaml sops --encrypt --in-place config/dev/secrets.env
   ```
-- Single files loaded/saved via `--file` are **not** automatically
-  encrypted — use SOPS directly if you need to encrypt them.
+- Single files loaded/saved via `--file` **are** handled by dotconfig's
+  encryption pipeline:
+  - **`load --file`** auto-decrypts SOPS-encrypted source files and
+    writes plaintext to the destination. For YAML/JSON it also merges
+    in any `<name>.secrets.<ext>` companion (also auto-decrypted).
+  - **`save --file`** auto-encrypts:
+    - With `-e/--encrypt`: the whole file is SOPS-encrypted.
+    - For YAML/JSON without `-e`: secret-tagged leaves are split into
+      a public file (with `REDACTED` placeholders) and an encrypted
+      `<name>.secrets.<ext>` companion. If 100% of leaves are secrets,
+      the whole file is encrypted instead.
+    - For `.env`: same split-secrets behavior as YAML/JSON.
+    - For unknown formats (e.g. `.credentials`, `.pem`): a content
+      scanner looks for secret patterns (private-key headers, etc.)
+      and encrypts the whole file when detected.
+  - The only case where `save --file` writes plaintext is when no
+    secret pattern is detected at all. Pass `-e` if you want to force
+    encryption regardless of detection.
 
 ---
 
