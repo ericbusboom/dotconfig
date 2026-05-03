@@ -879,6 +879,19 @@ class TestSaveFileRawSecrets:
         assert (config_dir / "dev" / "notes.txt").exists()
         assert "just some notes" in (config_dir / "dev" / "notes.txt").read_text()
 
+    def test_age_secret_key_auto_encrypted(self, config_dir, tmp_path):
+        """An age-keygen output file is auto-encrypted on save."""
+        src = tmp_path / "student-age-key.txt"
+        src.write_text(
+            "# created: 2026-05-03T10:47:58-07:00\n"
+            "# public key: age120vvqr0kuextc4czt2t84zy4hz9pzlejay5dfut5m6uwt0lu7ccsm2w4nq\n"
+            "AGE-SECRET-KEY-1RFZ8WVJFA4EZZS3QMRLK4Y5W8YK2KUW7MYY4TTZRAYT3LCVJN44S3H8XF7\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt) as mock:
+            save_file("dev", None, "student-age-key.txt", config_dir, source=src)
+        mock.assert_called_once()
+        assert (config_dir / "dev" / "student-age-key.txt").exists()
+
     def test_source_path_uses_basename(self, config_dir, tmp_path):
         """A full path like /home/user/.ssh/id_rsa stores as just 'id_rsa'."""
         subdir = tmp_path / ".ssh"

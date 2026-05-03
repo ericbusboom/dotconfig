@@ -12,6 +12,7 @@ to a SOPS-encrypted companion file (e.g. app.secrets.yaml).
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -65,11 +66,28 @@ _DETECT_SECRETS_SETTINGS = {
 }
 
 
+_AGE_SECRET_KEY_RE = re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]{50,}")
+
+
+def _has_extra_secret_pattern(text: str) -> bool:
+    """Catch secret formats that detect-secrets does not ship plugins for.
+
+    - ``-----BEGIN ... PRIVATE KEY-----`` (PEM headers)
+    - ``AGE-SECRET-KEY-1...`` (age private keys; SOPS uses these)
+    """
+    if "-----BEGIN" in text and "PRIVATE KEY" in text:
+        return True
+    if _AGE_SECRET_KEY_RE.search(text):
+        return True
+    return False
+
+
 def _content_has_secrets(content: str) -> bool:
     """Return True if raw file content contains secret patterns.
 
-    Scans line by line using detect-secrets pattern-based plugins.
-    Catches private keys (``-----BEGIN``), embedded tokens, etc.
+    Scans line by line using detect-secrets pattern-based plugins, plus
+    fallbacks for formats detect-secrets doesn't recognise (PEM private
+    key blocks, age private keys).
     """
     try:
         from detect_secrets.core.scan import scan_line
@@ -82,11 +100,7 @@ def _content_has_secrets(content: str) -> bool:
     except ImportError:
         pass
 
-    # Also check for common private key headers directly
-    if "-----BEGIN" in content and "PRIVATE KEY" in content:
-        return True
-
-    return False
+    return _has_extra_secret_pattern(content)
 
 
 def _is_secret_value(value: str) -> bool:
@@ -100,9 +114,12 @@ def _is_secret_value(value: str) -> bool:
         from detect_secrets.settings import transient_settings
 
         with transient_settings(_DETECT_SECRETS_SETTINGS):
-            return any(True for _ in scan_line(str(value)))
+            if any(True for _ in scan_line(str(value))):
+                return True
     except ImportError:
-        return False
+        pass
+
+    return _has_extra_secret_pattern(str(value))
 
 
 def _secrets_companion(filename: str) -> str:
