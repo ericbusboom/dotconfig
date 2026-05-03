@@ -34,6 +34,7 @@ from typing import List, Optional, Tuple
 
 from .agent import show_agent_instructions
 from .audit import run_audit
+from .reencrypt import reencrypt_all
 from .config import show_config
 from .gh_push import gh_push as _gh_push
 from .hooks import install_pre_commit_hook
@@ -992,6 +993,31 @@ def audit(ctx: click.Context) -> None:
     clean = run_audit(cfg)
     if not clean:
         sys.exit(1)
+
+
+@cli.command()
+@click.pass_context
+def reencrypt(ctx: click.Context) -> None:
+    """Re-encrypt every SOPS-encrypted file under config/ in place.
+
+    Useful after editing sops.yaml — for instance to add or remove an
+    age recipient. Existing files keep their old recipient list until
+    re-encrypted. Walks the entire config tree; fails fast on the first
+    decrypt or encrypt error.
+
+    Example:
+
+    \b
+        dotconfig reencrypt
+        dotconfig -c /path/to/config reencrypt
+    """
+    from .discover import find_config_dir
+
+    cfg = _resolve_config_dir(ctx)
+    if cfg is None:
+        cfg = find_config_dir() or Path("config")
+
+    reencrypt_all(cfg)
 
 
 @cli.command()
