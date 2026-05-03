@@ -322,56 +322,42 @@ class TestRmKey:
 
 
 class TestSendKey:
-    def test_sends_key_with_host_as_name(self, config_dir, capsys):
+    def test_sends_key_to_host(self, config_dir, capsys):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        (keys / "myhost_ed25519").write_text("private")
-        (keys / "myhost_ed25519.pub").write_text("ssh-ed25519 AAAA test")
+        (keys / "deploy").write_text("private")
+        (keys / "deploy.pub").write_text("ssh-ed25519 AAAA test")
 
         with patch("dotconfig.key.shutil.which", return_value="/usr/bin/ssh-copy-id"), \
              patch("dotconfig.key.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
-            send_key("myhost", config_dir=config_dir)
+            send_key("deploy", "user@host.example.com", config_dir=config_dir)
 
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "ssh-copy-id"
-        assert "myhost" in cmd
-
-    def test_sends_key_with_override_name(self, config_dir, capsys):
-        keys = config_dir / "keys"
-        keys.mkdir(exist_ok=True)
-        (keys / "deploy_ed25519").write_text("private")
-        (keys / "deploy_ed25519.pub").write_text("ssh-ed25519 AAAA test")
-
-        with patch("dotconfig.key.shutil.which", return_value="/usr/bin/ssh-copy-id"), \
-             patch("dotconfig.key.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            send_key("myhost", key_name="deploy", config_dir=config_dir)
-
-        cmd = mock_run.call_args[0][0]
-        assert "myhost" in cmd
-        assert "deploy_ed25519.pub" in cmd[2]
+        assert cmd[-1] == "user@host.example.com"
+        assert "deploy.pub" in cmd[2]
 
     def test_key_not_found(self, config_dir):
         (config_dir / "keys").mkdir(exist_ok=True)
         with pytest.raises(SystemExit):
-            send_key("myhost", config_dir=config_dir)
+            send_key("missing", "user@host", config_dir=config_dir)
 
     def test_no_pub_key(self, config_dir):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        (keys / "myhost").write_text("private")
+        (keys / "deploy").write_text("private")
 
         with pytest.raises(SystemExit):
-            send_key("myhost", config_dir=config_dir)
+            send_key("deploy", "user@host", config_dir=config_dir)
 
     def test_ssh_copy_id_not_found(self, config_dir):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        (keys / "myhost").write_text("private")
-        (keys / "myhost.pub").write_text("public")
+        (keys / "deploy").write_text("private")
+        (keys / "deploy.pub").write_text("public")
 
         with patch("dotconfig.key.shutil.which", return_value=None):
             with pytest.raises(SystemExit):
-                send_key("myhost", config_dir=config_dir)
+                send_key("deploy", "user@host", config_dir=config_dir)

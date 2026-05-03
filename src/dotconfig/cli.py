@@ -872,22 +872,22 @@ def key_rm(ctx: click.Context, name: str, config_dir: str) -> None:
 
 
 @key.command("send")
+@click.argument("name")
 @click.argument("host")
-@click.option("--key", "key_name", default=None,
-              help="Key name to send (defaults to host name).")
 @click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_send(ctx: click.Context, host: str, key_name: str, config_dir: str) -> None:
+def key_send(ctx: click.Context, name: str, host: str, config_dir: str) -> None:
     """Send a public key to a remote host via ssh-copy-id.
 
-    By default the key name matches the host argument.
+    NAME is the key in config/keys/. HOST is an SSH destination spec
+    like user@hostname.
 
     \b
-        dotconfig key send myhost
-        dotconfig key send myhost --key deploy_ed25519
+        dotconfig key send deploy root@web01.example.com
+        dotconfig key send apps.example.org deploy@apps.example.org
     """
     cfg = _resolve_config_dir(ctx, config_dir)
-    send_key(host, key_name=key_name, config_dir=cfg)
+    send_key(name, host, config_dir=cfg)
 
 
 @cli.command("gh-push")

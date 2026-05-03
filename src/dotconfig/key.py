@@ -341,12 +341,14 @@ def rm_key(name: str, config_dir: Optional[Path] = None) -> None:
 
 
 def send_key(
+    name: str,
     host: str,
-    key_name: Optional[str] = None,
     config_dir: Optional[Path] = None,
 ) -> None:
-    """Send a public key to a remote host via ssh-copy-id."""
-    name = key_name if key_name else host
+    """Send a public key to a remote host via ssh-copy-id.
+
+    ``host`` is an SSH destination spec like ``user@hostname``.
+    """
     keys = _keys_dir(config_dir)
 
     priv = _find_key(keys, name)
