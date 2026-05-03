@@ -38,7 +38,7 @@ from .config import show_config
 from .gh_push import gh_push as _gh_push
 from .hooks import install_pre_commit_hook
 from .init import init_config
-from .key import gen_key, get_key, list_keys, pub_key, rm_key, save_key, send_key
+from .key import gen_key, get_key, list_keys, load_key, pub_key, rm_key, save_key, send_key
 from .load import load_config, load_file
 from .save import save_config, save_file
 
@@ -541,6 +541,15 @@ def load(
     help="Save a specific file (e.g. foobar.yaml) into the config directory.",
 )
 @click.option(
+    "-n", "--name",
+    "dest_name",
+    default=None,
+    help="Destination filename inside the config tree. Defaults to the "
+         "basename of --file. Use this when the source path's basename "
+         "isn't what you want stored (e.g. saving "
+         "/tmp/scratch.credentials as route53-ro.credentials).",
+)
+@click.option(
     "-e", "--encrypt",
     is_flag=True,
     default=False,
@@ -581,6 +590,7 @@ def save(
     env_file: str,
     config_dir: str,
     filename: str,
+    dest_name: Optional[str],
     encrypt: bool,
     use_json: bool,
     use_yaml: bool,
@@ -622,6 +632,7 @@ def save(
         dotconfig save --file app.yaml -d dev
         dotconfig save --file secrets.yaml -d dev --encrypt
         dotconfig save --file settings.json -l alice
+        dotconfig save --file /tmp/scratch.credentials -n route53-ro.credentials -d aws
     """
     if use_json and use_yaml:
         raise click.UsageError("--json and --yaml are mutually exclusive")
@@ -632,6 +643,8 @@ def save(
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
+    if dest_name and not filename:
+        raise click.UsageError("-n/--name can only be used with --file")
     if add_export and filename:
         raise click.UsageError("--add-export cannot be used with --file")
     if add_export and (use_json or use_yaml):
@@ -664,10 +677,14 @@ def save(
         if fmt != "env":
             raise click.UsageError("--json/--yaml cannot be used with --file")
         file_path = Path(filename).expanduser()
+        # -n/--name overrides the source basename for the destination.
+        # When provided as a path, only the basename is used — the
+        # destination directory is always config/<deploy>/ (or local/).
+        stored_name = Path(dest_name).name if dest_name else file_path.name
         save_file(
             deployment=deploy,
             local=local,
-            filename=file_path.name,
+            filename=stored_name,
             config_dir=cfg,
             source=file_path,
             encrypt=encrypt,
@@ -739,16 +756,75 @@ def key_save(ctx: click.Context, file: str, name: str, config_dir: str) -> None:
 
 @key.command("get")
 @click.argument("name")
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the decrypted key to this path (mode 0600). Overrides the default config/files/<name>.",
+)
+@click.option(
+    "-S",
+    "--stdout",
+    "to_stdout",
+    is_flag=True,
+    default=False,
+    help="Print the decrypted key to stdout instead of writing a file.",
+)
 @click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_get(ctx: click.Context, name: str, config_dir: str) -> None:
-    """Decrypt and print a private key to stdout.
+def key_get(
+    ctx: click.Context,
+    name: str,
+    output: Optional[Path],
+    to_stdout: bool,
+    config_dir: str,
+) -> None:
+    """Decrypt a private key.
+
+    By default, writes the decrypted keypair into config/files/<name>
+    (mode 0600 for the private key, 0644 for the .pub if present).
 
     \b
-        dotconfig key get deploy
+        dotconfig key get deploy                  # → config/files/deploy
+        dotconfig key get deploy -o ~/.ssh/deploy # → custom path
+        dotconfig key get deploy -S               # → stdout
+    """
+    if output is not None and to_stdout:
+        raise click.UsageError("--output and --stdout are mutually exclusive")
+    cfg = _resolve_config_dir(ctx, config_dir)
+    get_key(name, config_dir=cfg, output=output, to_stdout=to_stdout)
+
+
+@key.command("load")
+@click.argument("name")
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the decrypted key to this path (mode 0600). Overrides the default config/files/<name>.",
+)
+@click.option("-c", "--config-dir", default=None, help="Root config directory.")
+@click.pass_context
+def key_load(
+    ctx: click.Context,
+    name: str,
+    output: Optional[Path],
+    config_dir: str,
+) -> None:
+    """Decrypt a keypair into config/files/<name>.
+
+    Writes the decrypted private key (mode 0600) and its .pub companion
+    (mode 0644, if present) into config/files/, ready for tools that need
+    them on disk in plaintext.
+
+    \b
+        dotconfig key load deploy
+        dotconfig key load deploy -o ~/.ssh/deploy
     """
     cfg = _resolve_config_dir(ctx, config_dir)
-    get_key(name, config_dir=cfg)
+    load_key(name, config_dir=cfg, output=output)
 
 
 @key.command("pub")

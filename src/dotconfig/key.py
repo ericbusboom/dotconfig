@@ -5,9 +5,11 @@ Keys are stored in ``config/keys/`` — private keys SOPS-encrypted,
 public keys in plaintext.
 """
 
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +33,17 @@ def _keys_dir(config_dir: Optional[Path] = None) -> Path:
     return keys
 
 
+def _files_dir(config_dir: Optional[Path] = None) -> Path:
+    """Return the unencrypted-files directory, creating it if needed."""
+    if config_dir is None:
+        config_dir = find_config_dir()
+        if config_dir is None:
+            config_dir = Path("config")
+    files = config_dir / "files"
+    files.mkdir(parents=True, exist_ok=True)
+    return files
+
+
 def _sops_config(config_dir: Optional[Path] = None) -> Optional[Path]:
     """Return the sops.yaml path if it exists."""
     if config_dir is None:
@@ -42,21 +55,24 @@ def _sops_config(config_dir: Optional[Path] = None) -> Optional[Path]:
 
 
 def _find_key(keys_dir: Path, name: str) -> Optional[Path]:
-    """Find a private key file by name (with or without type suffix)."""
-    # Exact match
+    """Find a private key file by name.
+
+    New keys are stored under the exact name the user provided. For
+    backward compatibility with keys created before the suffix was
+    dropped, also accept ``<name>_<type>`` for known SSH key types.
+    """
     exact = keys_dir / name
-    if exact.exists() and not exact.suffix == ".pub":
+    if exact.is_file() and not exact.name.endswith(".pub"):
         return exact
-    # Glob for name_* patterns (e.g. deploy matches deploy_ed25519)
-    matches = [
-        p for p in keys_dir.iterdir()
-        if p.stem.startswith(name) and p.suffix != ".pub" and p.is_file()
-        and (p.stem == name or p.stem.startswith(name + "_"))
+
+    legacy = [
+        keys_dir / f"{name}_{t}" for t in _KEY_TYPES
+        if (keys_dir / f"{name}_{t}").is_file()
     ]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        warn(f"ambiguous key name '{name}' — matches: {', '.join(p.name for p in matches)}")
+    if len(legacy) == 1:
+        return legacy[0]
+    if len(legacy) > 1:
+        warn(f"ambiguous key name '{name}' — matches: {', '.join(p.name for p in legacy)}")
         return None
     return None
 
@@ -75,12 +91,11 @@ def gen_key(
     keys = _keys_dir(config_dir)
     sops_cfg = _sops_config(config_dir)
 
-    key_name = f"{name}_{key_type}"
-    priv_path = keys / key_name
-    pub_path = keys / f"{key_name}.pub"
+    priv_path = keys / name
+    pub_path = keys / f"{name}.pub"
 
     if priv_path.exists() or pub_path.exists():
-        error(f"key '{key_name}' already exists in {keys}")
+        error(f"key '{name}' already exists in {keys}")
         sys.exit(1)
 
     # Generate the keypair to a temp location
@@ -106,7 +121,7 @@ def gen_key(
         created(f"{priv_path.name} (plaintext)")
 
     created(f"{pub_path.name}")
-    ok(f"generated {key_type} keypair '{key_name}'")
+    ok(f"generated {key_type} keypair '{name}'")
 
 
 def save_key(
@@ -149,8 +164,52 @@ def save_key(
     ok(f"saved key '{key_name}'")
 
 
-def get_key(name: str, config_dir: Optional[Path] = None) -> None:
-    """Decrypt and print a private key to stdout."""
+def _decrypt_priv(priv: Path, sops_cfg: Optional[Path]) -> str:
+    """Return the decrypted contents of a (possibly SOPS-encrypted) key file."""
+    if _is_sops_encrypted(priv):
+        content = _decrypt_sops(priv, sops_cfg)
+        if content is None:
+            error(f"failed to decrypt {priv}")
+            sys.exit(1)
+        return content
+    return priv.read_text()
+
+
+def _write_keypair(priv: Path, content: str, dest: Path) -> None:
+    """Write decrypted private key to ``dest`` (0600), copy .pub alongside."""
+    if dest.exists():
+        error(f"refusing to overwrite existing file: {dest}")
+        sys.exit(1)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content)
+    os.chmod(dest, 0o600)
+    created(f"{dest} (0600)")
+
+    pub_src = Path(str(priv) + ".pub")
+    if pub_src.exists():
+        pub_dest = Path(str(dest) + ".pub")
+        if pub_dest.exists():
+            warn(f"public key already exists, not overwriting: {pub_dest}")
+        else:
+            pub_dest.write_text(pub_src.read_text())
+            os.chmod(pub_dest, 0o644)
+            created(f"{pub_dest} (0644)")
+
+
+def get_key(
+    name: str,
+    config_dir: Optional[Path] = None,
+    output: Optional[Path] = None,
+    to_stdout: bool = False,
+) -> None:
+    """Decrypt a private key.
+
+    Destination resolution:
+
+    - ``to_stdout=True`` — print decrypted key to stdout, ignore ``output``.
+    - ``output`` set — write to that path (mode 0600), copy ``.pub`` alongside.
+    - otherwise — write to ``config/files/<name>`` (mode 0600), copy ``.pub``.
+    """
     keys = _keys_dir(config_dir)
     sops_cfg = _sops_config(config_dir)
 
@@ -159,14 +218,35 @@ def get_key(name: str, config_dir: Optional[Path] = None) -> None:
         error(f"key '{name}' not found in {keys}")
         sys.exit(1)
 
-    if _is_sops_encrypted(priv):
-        content = _decrypt_sops(priv, sops_cfg)
-        if content is None:
-            error(f"failed to decrypt {priv}")
-            sys.exit(1)
+    content = _decrypt_priv(priv, sops_cfg)
+
+    if to_stdout:
         print(content, end="")
-    else:
-        print(priv.read_text(), end="")
+        return
+
+    dest = output if output is not None else _files_dir(config_dir) / name
+    _write_keypair(priv, content, dest)
+    ok(f"wrote key '{name}' to {dest}")
+
+
+def load_key(
+    name: str,
+    config_dir: Optional[Path] = None,
+    output: Optional[Path] = None,
+) -> None:
+    """Decrypt a keypair into ``config/files/<name>`` (or ``output``)."""
+    keys = _keys_dir(config_dir)
+    sops_cfg = _sops_config(config_dir)
+
+    priv = _find_key(keys, name)
+    if priv is None:
+        error(f"key '{name}' not found in {keys}")
+        sys.exit(1)
+
+    content = _decrypt_priv(priv, sops_cfg)
+    dest = output if output is not None else _files_dir(config_dir) / name
+    _write_keypair(priv, content, dest)
+    ok(f"loaded key '{name}' to {dest}")
 
 
 def pub_key(name: str, config_dir: Optional[Path] = None) -> None:
@@ -193,18 +273,27 @@ def pub_key(name: str, config_dir: Optional[Path] = None) -> None:
     else:
         content = priv.read_text()
 
+    # ssh-keygen -y refuses to read from /dev/stdin (permissions too open),
+    # so write the decrypted key to a 0600 tempfile and point ssh-keygen at it.
+    fd, tmp_name = tempfile.mkstemp(prefix="dotconfig-key-")
+    tmp_path = Path(tmp_name)
     try:
-        result = subprocess.run(
-            ["ssh-keygen", "-y", "-f", "/dev/stdin"],
-            input=content,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        print(result.stdout, end="")
-    except (FileNotFoundError, subprocess.CalledProcessError) as e:
-        error(f"could not derive public key: {e}")
-        sys.exit(1)
+        os.chmod(tmp_path, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        try:
+            result = subprocess.run(
+                ["ssh-keygen", "-y", "-f", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            print(result.stdout, end="")
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            error(f"could not derive public key: {e}")
+            sys.exit(1)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def list_keys(config_dir: Optional[Path] = None) -> None:

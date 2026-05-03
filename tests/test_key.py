@@ -10,6 +10,7 @@ from dotconfig.key import (
     gen_key,
     get_key,
     list_keys,
+    load_key,
     pub_key,
     rm_key,
     save_key,
@@ -53,7 +54,25 @@ class TestGenKey:
             gen_key("deploy", config_dir=config_dir)
 
         out = capsys.readouterr().out
-        assert "deploy_ed25519" in out
+        assert "deploy" in out
+        assert "deploy_ed25519" not in out
+        assert (config_dir / "keys" / "deploy").exists()
+        assert (config_dir / "keys" / "deploy.pub").exists()
+
+    def test_dotted_name_preserved(self, config_dir, capsys):
+        with patch("dotconfig.key.subprocess.run") as mock_run, \
+             patch("dotconfig.key._encrypt_sops", return_value=True):
+            def fake_keygen(*args, **kwargs):
+                cmd = args[0]
+                priv_path = Path(cmd[cmd.index("-f") + 1])
+                priv_path.write_text("FAKE PRIVATE KEY")
+                Path(str(priv_path) + ".pub").write_text("ssh-ed25519 AAAA fake")
+                return MagicMock(returncode=0)
+
+            mock_run.side_effect = fake_keygen
+            gen_key("apps.example.org", config_dir=config_dir)
+
+        assert (config_dir / "keys" / "apps.example.org").exists()
 
     def test_rejects_invalid_type(self, config_dir):
         with pytest.raises(SystemExit):
@@ -62,7 +81,7 @@ class TestGenKey:
     def test_rejects_existing_key(self, config_dir):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        (keys / "deploy_ed25519").write_text("exists")
+        (keys / "deploy").write_text("exists")
         with pytest.raises(SystemExit):
             gen_key("deploy", config_dir=config_dir)
 
@@ -98,35 +117,122 @@ class TestSaveKey:
 
 
 class TestGetKey:
-    def test_prints_decrypted_key(self, config_dir, capsys):
+    def test_stdout_prints_decrypted(self, config_dir, capsys):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        priv = keys / "deploy_ed25519"
-        priv.write_text("ENCRYPTED CONTENT")
+        (keys / "deploy_ed25519").write_text("ENCRYPTED CONTENT")
 
         with patch("dotconfig.key._is_sops_encrypted", return_value=True), \
              patch("dotconfig.key._decrypt_sops", return_value="DECRYPTED KEY"):
-            get_key("deploy", config_dir=config_dir)
+            get_key("deploy", config_dir=config_dir, to_stdout=True)
 
-        out = capsys.readouterr().out
-        assert "DECRYPTED KEY" in out
+        assert "DECRYPTED KEY" in capsys.readouterr().out
 
-    def test_prints_plaintext_key(self, config_dir, capsys):
+    def test_stdout_prints_plaintext(self, config_dir, capsys):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        priv = keys / "mykey"
-        priv.write_text("PLAIN KEY")
+        (keys / "mykey").write_text("PLAIN KEY")
 
         with patch("dotconfig.key._is_sops_encrypted", return_value=False):
-            get_key("mykey", config_dir=config_dir)
+            get_key("mykey", config_dir=config_dir, to_stdout=True)
 
-        out = capsys.readouterr().out
-        assert "PLAIN KEY" in out
+        assert "PLAIN KEY" in capsys.readouterr().out
+
+    def test_default_writes_to_config_files_dir(self, config_dir):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+        (keys / "deploy.pub").write_text("ssh-ed25519 AAAA pub")
+
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False):
+            get_key("deploy", config_dir=config_dir)
+
+        priv_dest = config_dir / "files" / "deploy"
+        pub_dest = config_dir / "files" / "deploy.pub"
+        assert priv_dest.read_text() == "PLAIN KEY"
+        assert (priv_dest.stat().st_mode & 0o777) == 0o600
+        assert pub_dest.read_text() == "ssh-ed25519 AAAA pub"
+        assert (pub_dest.stat().st_mode & 0o777) == 0o644
+
+    def test_output_overrides_default(self, config_dir, tmp_path):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+
+        dest = tmp_path / "out" / "deploy"
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False):
+            get_key("deploy", config_dir=config_dir, output=dest)
+
+        assert dest.read_text() == "PLAIN KEY"
+        assert (dest.stat().st_mode & 0o777) == 0o600
 
     def test_key_not_found(self, config_dir):
         (config_dir / "keys").mkdir(exist_ok=True)
         with pytest.raises(SystemExit):
-            get_key("nonexistent", config_dir=config_dir)
+            get_key("nonexistent", config_dir=config_dir, to_stdout=True)
+
+    def test_refuses_to_overwrite(self, config_dir, tmp_path):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+
+        dest = tmp_path / "existing"
+        dest.write_text("DO NOT OVERWRITE")
+
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             pytest.raises(SystemExit):
+            get_key("deploy", config_dir=config_dir, output=dest)
+
+        assert dest.read_text() == "DO NOT OVERWRITE"
+
+
+class TestLoadKey:
+    def test_loads_to_config_files_dir(self, config_dir):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+        (keys / "deploy.pub").write_text("ssh-ed25519 AAAA pub")
+
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False):
+            load_key("deploy", config_dir=config_dir)
+
+        priv_dest = config_dir / "files" / "deploy"
+        pub_dest = config_dir / "files" / "deploy.pub"
+        assert priv_dest.read_text() == "PLAIN KEY"
+        assert (priv_dest.stat().st_mode & 0o777) == 0o600
+        assert pub_dest.read_text() == "ssh-ed25519 AAAA pub"
+        assert (pub_dest.stat().st_mode & 0o777) == 0o644
+
+    def test_output_overrides_default(self, config_dir, tmp_path):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+
+        dest = tmp_path / "elsewhere" / "deploy"
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False):
+            load_key("deploy", config_dir=config_dir, output=dest)
+
+        assert dest.read_text() == "PLAIN KEY"
+        assert (dest.stat().st_mode & 0o777) == 0o600
+
+    def test_key_not_found(self, config_dir):
+        (config_dir / "keys").mkdir(exist_ok=True)
+        with pytest.raises(SystemExit):
+            load_key("nonexistent", config_dir=config_dir)
+
+    def test_refuses_to_overwrite(self, config_dir):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PLAIN KEY")
+        files = config_dir / "files"
+        files.mkdir()
+        (files / "deploy").write_text("DO NOT OVERWRITE")
+
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             pytest.raises(SystemExit):
+            load_key("deploy", config_dir=config_dir)
+
+        assert (files / "deploy").read_text() == "DO NOT OVERWRITE"
 
 
 class TestPubKey:
@@ -144,7 +250,7 @@ class TestPubKey:
     def test_derives_from_private(self, config_dir, capsys):
         keys = config_dir / "keys"
         keys.mkdir(exist_ok=True)
-        (keys / "deploy_ed25519").write_text("private key content")
+        (keys / "deploy").write_text("private key content")
 
         with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
              patch("dotconfig.key.subprocess.run") as mock_run:
@@ -154,8 +260,23 @@ class TestPubKey:
             )
             pub_key("deploy", config_dir=config_dir)
 
+        # Confirm ssh-keygen was invoked against a real file path (not /dev/stdin).
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["ssh-keygen", "-y", "-f"]
+        assert cmd[3] != "/dev/stdin"
+
         out = capsys.readouterr().out
         assert "ssh-ed25519 AAAA derived" in out
+
+    def test_legacy_name_with_type_suffix_resolves(self, config_dir, capsys):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy_ed25519").write_text("private")
+        (keys / "deploy_ed25519.pub").write_text("ssh-ed25519 AAAA legacy")
+
+        pub_key("deploy", config_dir=config_dir)
+        out = capsys.readouterr().out
+        assert "ssh-ed25519 AAAA legacy" in out
 
 
 class TestListKeys:
