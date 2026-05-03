@@ -225,7 +225,7 @@ class TestAuditCLI:
         cfg.mkdir(parents=True)
         (cfg / "public.env").write_text("APP_DOMAIN=example.com\n")
         runner = CliRunner()
-        result = runner.invoke(cli, ["audit", "-c", str(tmp_path / "config")])
+        result = runner.invoke(cli, [ "-c", str(tmp_path / "config"),"audit"])
         assert result.exit_code == 0
 
     def test_findings_exit_one(self, tmp_path):
@@ -233,7 +233,7 @@ class TestAuditCLI:
         cfg.mkdir(parents=True)
         (cfg / "public.env").write_text("SECRET_KEY=plaintext\n")
         runner = CliRunner()
-        result = runner.invoke(cli, ["audit", "-c", str(tmp_path / "config")])
+        result = runner.invoke(cli, [ "-c", str(tmp_path / "config"),"audit"])
         assert result.exit_code == 1
 
 

@@ -135,7 +135,7 @@ class TestLoadCliPositional:
         runner = CliRunner()
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             result = runner.invoke(
-                cli, ["load", "dev", "-c", str(stacked_config_dir)]
+                cli, [ "-c", str(stacked_config_dir),"load", "dev"]
             )
         assert result.exit_code == 0, result.output
         env = (tmp_path / ".env").read_text()
@@ -147,7 +147,7 @@ class TestLoadCliPositional:
         runner = CliRunner()
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             result = runner.invoke(
-                cli, ["load", "dev", "alice", "-c", str(stacked_config_dir)]
+                cli, [ "-c", str(stacked_config_dir),"load", "dev", "alice"]
             )
         assert result.exit_code == 0, result.output
         env = (tmp_path / ".env").read_text()
@@ -162,7 +162,7 @@ class TestLoadCliPositional:
         runner = CliRunner()
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             result = runner.invoke(
-                cli, ["load", "alice", "dev", "-c", str(stacked_config_dir)]
+                cli, [ "-c", str(stacked_config_dir),"load", "alice", "dev"]
             )
         assert result.exit_code == 0, result.output
         env = (tmp_path / ".env").read_text()
@@ -178,7 +178,7 @@ class TestLoadCliPositional:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             result = runner.invoke(
                 cli,
-                ["load", "dev", "prod", "alice", "bob", "-c", str(stacked_config_dir)],
+                [ "-c", str(stacked_config_dir),"load", "dev", "prod", "alice", "bob"],
             )
         assert result.exit_code == 0, result.output
         env = (tmp_path / ".env").read_text()
@@ -205,7 +205,7 @@ class TestLoadCliPositional:
         with patch("dotconfig.load._decrypt_sops", side_effect=_fake_decrypt):
             result = runner.invoke(
                 cli,
-                ["load", "-d", "dev", "-l", "alice", "-c", str(stacked_config_dir)],
+                [ "-c", str(stacked_config_dir),"load", "-d", "dev", "-l", "alice"],
             )
         assert result.exit_code == 0, result.output
         env = (tmp_path / ".env").read_text()
@@ -218,7 +218,7 @@ class TestLoadCliPositional:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "dev", "-l", "alice", "-c", str(stacked_config_dir)]
+            cli, [ "-c", str(stacked_config_dir),"load", "dev", "-l", "alice"]
         )
         assert result.exit_code != 0
         assert "cannot mix" in result.output.lower()
@@ -227,7 +227,7 @@ class TestLoadCliPositional:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "nonexistent", "-c", str(stacked_config_dir)]
+            cli, [ "-c", str(stacked_config_dir),"load", "nonexistent"]
         )
         assert result.exit_code != 0
         assert "unknown" in result.output.lower()
@@ -236,7 +236,7 @@ class TestLoadCliPositional:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "dev", "dev", "-c", str(stacked_config_dir)]
+            cli, [ "-c", str(stacked_config_dir),"load", "dev", "dev"]
         )
         assert result.exit_code != 0
         assert "duplicate" in result.output.lower()
@@ -244,7 +244,7 @@ class TestLoadCliPositional:
     def test_no_args_rejected(self, stacked_config_dir, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        result = runner.invoke(cli, ["load", "-c", str(stacked_config_dir)])
+        result = runner.invoke(cli, [ "-c", str(stacked_config_dir),"load"])
         assert result.exit_code != 0
         assert "deployment" in result.output.lower()
 
@@ -255,7 +255,7 @@ class TestLoadCliPositional:
         runner = CliRunner()
         result = runner.invoke(
             cli,
-            ["load", "dev", "prod", "--json", "-c", str(stacked_config_dir)],
+            [ "-c", str(stacked_config_dir),"load", "dev", "prod", "--json"],
         )
         assert result.exit_code != 0
         assert "single" in result.output.lower()
@@ -307,7 +307,7 @@ class TestSaveCliPositional:
         cfg = tmp_path / "config"
         runner = CliRunner()
         with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
-            result = runner.invoke(cli, ["save", "-c", str(cfg)])
+            result = runner.invoke(cli, [ "-c", str(cfg),"save"])
         assert result.exit_code == 0, result.output
         # Each source layer got its own destination
         assert (cfg / "dev" / "public.env").exists()
@@ -325,7 +325,7 @@ class TestSaveCliPositional:
         cfg = tmp_path / "config"
         runner = CliRunner()
         with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
-            result = runner.invoke(cli, ["save", "newdev", "-c", str(cfg)])
+            result = runner.invoke(cli, [ "-c", str(cfg),"save", "newdev"])
         assert result.exit_code == 0, result.output
         # Only the single dest deployment exists
         assert (cfg / "newdev" / "public.env").exists()
@@ -342,7 +342,7 @@ class TestSaveCliPositional:
         cfg = tmp_path / "config"
         runner = CliRunner()
         with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
-            result = runner.invoke(cli, ["save", "-d", "newdev", "-c", str(cfg)])
+            result = runner.invoke(cli, [ "-c", str(cfg),"save", "-d", "newdev"])
         assert result.exit_code == 0, result.output
         assert (cfg / "newdev" / "public.env").exists()
 
@@ -353,7 +353,7 @@ class TestSaveCliPositional:
         cfg = tmp_path / "config"
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["save", "newdev", "-l", "alice", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"save", "newdev", "-l", "alice"]
         )
         assert result.exit_code != 0
         assert "cannot mix" in result.output.lower()
@@ -365,7 +365,7 @@ class TestSaveCliPositional:
         cfg = tmp_path / "config"
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["save", "a", "b", "c", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"save", "a", "b", "c"]
         )
         assert result.exit_code != 0
         assert "at most two" in result.output.lower()
@@ -380,7 +380,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "--no-export", "--json", "--flat", "-S", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "--no-export", "--json", "--flat", "-S"]
         )
         assert result.exit_code == 0, result.output
         import json
@@ -394,7 +394,7 @@ class TestSaveCliPositional:
         (cfg / "prod" / "public.env").write_text("export FOO=bar\n")
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["load", "prod", "-S", "-c", str(cfg)])
+        result = runner.invoke(cli, [ "-c", str(cfg),"load", "prod", "-S"])
         assert result.exit_code == 0, result.output
         assert "export " not in result.output
         assert "FOO=bar" in result.output
@@ -407,7 +407,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-S", "--add-export", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-S", "--add-export"]
         )
         assert result.exit_code == 0, result.output
         assert "export FOO=bar" in result.output
@@ -422,7 +422,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-o", str(tmp_path / ".env"), "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-o", str(tmp_path / ".env")]
         )
         assert result.exit_code == 0, result.output
         assert "export FOO=bar" in (tmp_path / ".env").read_text()
@@ -435,7 +435,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "--no-export", "--add-export", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "--no-export", "--add-export"]
         )
         assert result.exit_code != 0
         assert "mutually exclusive" in result.output.lower()
@@ -450,7 +450,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-e", "CERT=cert.pem", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-e", "CERT=cert.pem"]
         )
         assert result.exit_code != 0
         assert "_file" in result.output.lower()
@@ -463,7 +463,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-e", "FOO", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-e", "FOO"]
         )
         assert result.exit_code != 0
         assert "_file" in result.output.lower()
@@ -476,7 +476,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-e", "cert_file", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-e", "cert_file"]
         )
         assert result.exit_code != 0
         # Error message mentions the *_FILE convention.
@@ -491,7 +491,7 @@ class TestSaveCliPositional:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["load", "prod", "-e", "CERT_FILE", "-S", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-e", "CERT_FILE", "-S"]
         )
         assert result.exit_code == 0, result.output
         import base64
@@ -512,7 +512,7 @@ class TestSaveCliPositional:
         runner = CliRunner()
         # `-e` with no value uses Click's flag_value sentinel.
         result = runner.invoke(
-            cli, ["load", "prod", "-e", "-S", "-c", str(cfg)]
+            cli, [ "-c", str(cfg),"load", "prod", "-e", "-S"]
         )
         assert result.exit_code == 0, result.output
         import base64

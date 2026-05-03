@@ -121,19 +121,12 @@ def _print_instructions(ctx: click.Context, param, value: bool) -> None:
     ctx.exit()
 
 
-def _resolve_config_dir(
-    ctx: click.Context, override: Optional[str]
-) -> Optional[Path]:
-    """Resolve config dir from subcommand override or top-level/env setting.
+def _resolve_config_dir(ctx: click.Context) -> Optional[Path]:
+    """Resolve config dir from the top-level ``-c/--config`` / ``DOTCONFIG_DIR``.
 
-    Precedence:
-      1. Subcommand ``-c/--config-dir`` value (if explicitly given).
-      2. Top-level ``-c/--config`` option / ``DOTCONFIG_DIR`` env var.
-      3. ``None`` (caller decides the fallback: a fixed default or
-         :func:`find_config_dir` discovery).
+    Returns ``None`` when no config root was given; callers fall back to
+    :func:`find_config_dir` discovery or a fixed default.
     """
-    if override:
-        return Path(override).expanduser()
     root = (ctx.obj or {}).get("config_root") if ctx.obj else None
     if root:
         return Path(root).expanduser()
@@ -148,8 +141,7 @@ def _resolve_config_dir(
     envvar="DOTCONFIG_DIR",
     default=None,
     metavar="PATH",
-    help="Root config directory (env: DOTCONFIG_DIR). "
-         "A subcommand's own -c/--config-dir overrides this when given.",
+    help="Root config directory (env: DOTCONFIG_DIR).",
 )
 @click.option(
     "--instructions",
@@ -210,7 +202,10 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
         dotconfig init --config-dir myconfig
         dotconfig init -q
     """
-    cfg = _resolve_config_dir(ctx, config_dir) or Path("config")
+    cfg = (
+        Path(config_dir).expanduser() if config_dir
+        else _resolve_config_dir(ctx) or Path("config")
+    )
     init_config(config_dir=cfg, quiet=quiet)
 
 
@@ -233,11 +228,6 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
     flag_value=".",
     help="Local / developer name for personal overrides. "
          "Legacy single-value alias for the positional form.",
-)
-@click.option(
-    "-c", "--config-dir",
-    default=None,
-    help="Root config directory.  [default: $DOTCONFIG_DIR or 'config']",
 )
 @click.option(
     "--output", "-o",
@@ -322,7 +312,6 @@ def load(
     names: Tuple[str, ...],
     deploy: str,
     local: str,
-    config_dir: str,
     output: str,
     filename: str,
     to_stdout: bool,
@@ -420,7 +409,7 @@ def load(
     if to_stdout and not add_export and not no_export:
         no_export = True
 
-    cfg = _resolve_config_dir(ctx, config_dir) or Path("config")
+    cfg = _resolve_config_dir(ctx) or Path("config")
 
     # ---- Resolve positional names vs legacy -d/-l flags ----
     if names and (deploy or local):
@@ -528,11 +517,6 @@ def load(
     help=".env file to read and save.",
 )
 @click.option(
-    "-c", "--config-dir",
-    default=None,
-    help="Root config directory.  [default: $DOTCONFIG_DIR or 'config']",
-)
-@click.option(
     "--file", "-f",
     "filename",
     default=None,
@@ -588,7 +572,6 @@ def save(
     deploy: str,
     local: str,
     env_file: str,
-    config_dir: str,
     filename: str,
     dest_name: Optional[str],
     encrypt: bool,
@@ -639,7 +622,7 @@ def save(
     if flat and not (use_json or use_yaml):
         raise click.UsageError("--flat requires --json or --yaml")
 
-    cfg = _resolve_config_dir(ctx, config_dir) or Path("config")
+    cfg = _resolve_config_dir(ctx) or Path("config")
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
@@ -722,25 +705,23 @@ def key() -> None:
               help="Key type to generate.")
 @click.option("--bits", default=None, type=int,
               help="Key size in bits (RSA only).")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_gen(ctx: click.Context, name: str, key_type: str, bits: int, config_dir: str) -> None:
+def key_gen(ctx: click.Context, name: str, key_type: str, bits: int) -> None:
     """Generate an SSH keypair.
 
     \b
         dotconfig key gen deploy
         dotconfig key gen deploy --type rsa --bits 4096
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     gen_key(name, key_type=key_type, bits=bits, config_dir=cfg)
 
 
 @key.command("save")
 @click.argument("file", type=click.Path(exists=True))
 @click.option("--name", default=None, help="Override the stored key name.")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_save(ctx: click.Context, file: str, name: str, config_dir: str) -> None:
+def key_save(ctx: click.Context, file: str, name: str) -> None:
     """Import an existing key file.
 
     Encrypts the private key with SOPS and stores it in config/keys/.
@@ -750,7 +731,7 @@ def key_save(ctx: click.Context, file: str, name: str, config_dir: str) -> None:
         dotconfig key save ~/.ssh/id_ed25519
         dotconfig key save deploy.pem --name deploy
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     save_key(Path(file), name=name, config_dir=cfg)
 
 
@@ -771,14 +752,12 @@ def key_save(ctx: click.Context, file: str, name: str, config_dir: str) -> None:
     default=False,
     help="Print the decrypted key to stdout instead of writing a file.",
 )
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
 def key_get(
     ctx: click.Context,
     name: str,
     output: Optional[Path],
     to_stdout: bool,
-    config_dir: str,
 ) -> None:
     """Decrypt a private key.
 
@@ -792,7 +771,7 @@ def key_get(
     """
     if output is not None and to_stdout:
         raise click.UsageError("--output and --stdout are mutually exclusive")
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     get_key(name, config_dir=cfg, output=output, to_stdout=to_stdout)
 
 
@@ -805,13 +784,11 @@ def key_get(
     default=None,
     help="Write the decrypted key to this path (mode 0600). Overrides the default config/files/<name>.",
 )
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
 def key_load(
     ctx: click.Context,
     name: str,
     output: Optional[Path],
-    config_dir: str,
 ) -> None:
     """Decrypt a keypair into config/files/<name>.
 
@@ -823,15 +800,14 @@ def key_load(
         dotconfig key load deploy
         dotconfig key load deploy -o ~/.ssh/deploy
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     load_key(name, config_dir=cfg, output=output)
 
 
 @key.command("pub")
 @click.argument("name")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_pub(ctx: click.Context, name: str, config_dir: str) -> None:
+def key_pub(ctx: click.Context, name: str) -> None:
     """Print the public key for a named key.
 
     Uses the .pub file if it exists, otherwise derives from the
@@ -840,43 +816,40 @@ def key_pub(ctx: click.Context, name: str, config_dir: str) -> None:
     \b
         dotconfig key pub deploy
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     pub_key(name, config_dir=cfg)
 
 
 @key.command("list")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_list(ctx: click.Context, config_dir: str) -> None:
+def key_list(ctx: click.Context) -> None:
     """List all keys in config/keys/.
 
     \b
         dotconfig key list
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     list_keys(config_dir=cfg)
 
 
 @key.command("rm")
 @click.argument("name")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_rm(ctx: click.Context, name: str, config_dir: str) -> None:
+def key_rm(ctx: click.Context, name: str) -> None:
     """Remove a key and its .pub companion.
 
     \b
         dotconfig key rm deploy
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     rm_key(name, config_dir=cfg)
 
 
 @key.command("send")
 @click.argument("name")
 @click.argument("host")
-@click.option("-c", "--config-dir", default=None, help="Root config directory.")
 @click.pass_context
-def key_send(ctx: click.Context, name: str, host: str, config_dir: str) -> None:
+def key_send(ctx: click.Context, name: str, host: str) -> None:
     """Send a public key to a remote host via ssh-copy-id.
 
     NAME is the key in config/keys/. HOST is an SSH destination spec
@@ -886,15 +859,13 @@ def key_send(ctx: click.Context, name: str, host: str, config_dir: str) -> None:
         dotconfig key send deploy root@web01.example.com
         dotconfig key send apps.example.org deploy@apps.example.org
     """
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     send_key(name, host, config_dir=cfg)
 
 
 @cli.command("gh-push")
 @click.option("-d", "--deploy", required=True,
               help="Deployment name to sync secrets from.")
-@click.option("-c", "--config-dir", default=None,
-              help="Root config directory.  [default: $DOTCONFIG_DIR or 'config']")
 @click.option("--repo", default=None,
               help="GitHub repo (owner/repo). Auto-detected from git remote.")
 @click.option("--actions", is_flag=True, default=False,
@@ -913,7 +884,6 @@ def key_send(ctx: click.Context, name: str, host: str, config_dir: str) -> None:
 def gh_push_cmd(
     ctx: click.Context,
     deploy: str,
-    config_dir: str,
     repo: str,
     actions: bool,
     codespaces: bool,
@@ -935,7 +905,7 @@ def gh_push_cmd(
         dotconfig gh-push -d prod --include-age-key
     """
     keys_filter = [k.strip() for k in keys_csv.split(",")] if keys_csv else None
-    cfg = _resolve_config_dir(ctx, config_dir) or Path("config")
+    cfg = _resolve_config_dir(ctx) or Path("config")
     _gh_push(
         deployment=deploy,
         config_dir=cfg,
@@ -950,15 +920,8 @@ def gh_push_cmd(
 
 
 @cli.command()
-@click.option(
-    "-c", "--config-dir",
-    default=None,
-    is_flag=False,
-    flag_value=".",
-    help="Root config directory.  [default: auto-discovered or 'config']",
-)
 @click.pass_context
-def audit(ctx: click.Context, config_dir: str) -> None:
+def audit(ctx: click.Context) -> None:
     """Scan config/ for unencrypted secrets at rest.
 
     Walks the config directory looking for files that contain values
@@ -972,12 +935,12 @@ def audit(ctx: click.Context, config_dir: str) -> None:
 
     \b
         dotconfig audit
-        dotconfig audit -c /path/to/config
+        dotconfig -c /path/to/config audit
     """
     import sys
     from .discover import find_config_dir
 
-    cfg = _resolve_config_dir(ctx, config_dir)
+    cfg = _resolve_config_dir(ctx)
     if cfg is None:
         cfg = find_config_dir() or Path("config")
 
@@ -1004,7 +967,7 @@ def config(ctx: click.Context) -> None:
         DOTCONFIG_NAME=.config dotconfig config
         DOTCONFIG_DIR=/path/to/cfg dotconfig config
     """
-    override = _resolve_config_dir(ctx, None)
+    override = _resolve_config_dir(ctx)
     show_config(override=override)
 
 
