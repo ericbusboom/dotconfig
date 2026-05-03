@@ -38,7 +38,18 @@ from .config import show_config
 from .gh_push import gh_push as _gh_push
 from .hooks import install_pre_commit_hook
 from .init import init_config
-from .key import gen_key, get_key, list_keys, load_key, pub_key, rm_key, save_key, send_key
+from .key import (
+    gen_key,
+    get_key,
+    install_key,
+    list_keys,
+    load_key,
+    pub_key,
+    rm_key,
+    save_key,
+    send_key,
+    uninstall_key,
+)
 from .load import load_config, load_file
 from .save import save_config, save_file
 
@@ -861,6 +872,40 @@ def key_send(ctx: click.Context, name: str, host: str) -> None:
     """
     cfg = _resolve_config_dir(ctx)
     send_key(name, host, config_dir=cfg)
+
+
+@key.command("install")
+@click.argument("name")
+@click.argument("spec")
+@click.pass_context
+def key_install(ctx: click.Context, name: str, spec: str) -> None:
+    """Install a Host entry in ~/.ssh/config for SPEC.
+
+    NAME is the key in config/keys/. SPEC is user@host or just host.
+    The keypair is decrypted into config/files/<name> (if not already)
+    and IdentityFile points there. If the host already has an entry in
+    ~/.ssh/config, this is a no-op.
+
+    \b
+        dotconfig key install deploy root@web01.example.com
+        dotconfig key install apps.example.org apps.example.org
+    """
+    cfg = _resolve_config_dir(ctx)
+    install_key(name, spec, config_dir=cfg)
+
+
+@key.command("uninstall")
+@click.argument("host")
+@click.pass_context
+def key_uninstall(ctx: click.Context, host: str) -> None:
+    """Remove a Host entry from ~/.ssh/config.
+
+    HOST is the bare hostname (no user@ prefix).
+
+    \b
+        dotconfig key uninstall web01.example.com
+    """
+    uninstall_key(host)
 
 
 @cli.command("gh-push")

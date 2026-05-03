@@ -340,6 +340,28 @@ def rm_key(name: str, config_dir: Optional[Path] = None) -> None:
     ok(f"removed key '{name}'")
 
 
+def _ensure_loaded(name: str, config_dir: Optional[Path] = None) -> Path:
+    """Make sure ``config/files/<name>`` exists; decrypt if missing.
+
+    Returns the absolute path of the decrypted private key file. The
+    matching ``.pub`` (if present in config/keys/) is copied alongside.
+    """
+    keys = _keys_dir(config_dir)
+    sops_cfg = _sops_config(config_dir)
+
+    priv = _find_key(keys, name)
+    if priv is None:
+        error(f"key '{name}' not found in {keys}")
+        sys.exit(1)
+
+    files = _files_dir(config_dir)
+    dest = files / name
+    if not dest.exists():
+        content = _decrypt_priv(priv, sops_cfg)
+        _write_keypair(priv, content, dest)
+    return dest.resolve()
+
+
 def send_key(
     name: str,
     host: str,
@@ -347,23 +369,20 @@ def send_key(
 ) -> None:
     """Send a public key to a remote host via ssh-copy-id.
 
-    ``host`` is an SSH destination spec like ``user@hostname``.
+    Decrypts the keypair into ``config/files/<name>`` (if not already
+    there) so the path ``ssh-copy-id`` reports back is usable directly
+    by ``ssh -i``. ``host`` is an SSH destination spec like
+    ``user@hostname``.
     """
-    keys = _keys_dir(config_dir)
-
-    priv = _find_key(keys, name)
-    if priv is None:
-        error(f"key '{name}' not found in {keys}")
+    if shutil.which("ssh-copy-id") is None:
+        error("ssh-copy-id not found on PATH")
         sys.exit(1)
 
+    priv = _ensure_loaded(name, config_dir)
     pub_path = Path(str(priv) + ".pub")
     if not pub_path.exists():
         error(f"public key not found: {pub_path}")
         info("run 'dotconfig key pub <name>' to derive one, or save a .pub file")
-        sys.exit(1)
-
-    if shutil.which("ssh-copy-id") is None:
-        error("ssh-copy-id not found on PATH")
         sys.exit(1)
 
     info(f"sending {pub_path.name} to {host}")
@@ -376,3 +395,115 @@ def send_key(
     except subprocess.CalledProcessError as e:
         error(f"ssh-copy-id failed (exit {e.returncode})")
         sys.exit(1)
+
+
+def _ssh_config_path() -> Path:
+    return Path.home() / ".ssh" / "config"
+
+
+def _parse_user_host(spec: str) -> tuple[Optional[str], str]:
+    """Split ``user@host`` into ``(user, host)``. ``host`` alone returns ``(None, host)``."""
+    if "@" in spec:
+        user, _, host = spec.partition("@")
+        return (user or None, host)
+    return (None, spec)
+
+
+def _has_host_block(config_text: str, host: str) -> bool:
+    """True if ``config_text`` already contains a ``Host <host>`` line."""
+    for raw in config_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("host "):
+            hosts = line.split(None, 1)[1].split()
+            if host in hosts:
+                return True
+    return False
+
+
+def _remove_host_block(config_text: str, host: str) -> tuple[str, bool]:
+    """Remove a ``Host <host>`` block from ``config_text``.
+
+    Returns ``(new_text, removed)``.
+    """
+    lines = config_text.splitlines(keepends=True)
+    out: list[str] = []
+    skipping = False
+    removed = False
+    for raw in lines:
+        stripped = raw.strip()
+        is_host = stripped.lower().startswith("host ") and not stripped.startswith("#")
+        if is_host:
+            hosts = stripped.split(None, 1)[1].split()
+            if host in hosts:
+                skipping = True
+                removed = True
+                continue
+            skipping = False
+            out.append(raw)
+        elif skipping:
+            # Stay in the block until the next non-comment, non-blank top-level
+            # directive (heuristic: a line that doesn't start with whitespace).
+            if raw and not raw[0].isspace() and stripped and not stripped.startswith("#"):
+                skipping = False
+                out.append(raw)
+        else:
+            out.append(raw)
+    return ("".join(out), removed)
+
+
+def install_key(
+    name: str,
+    spec: str,
+    config_dir: Optional[Path] = None,
+) -> None:
+    """Add a Host block to ~/.ssh/config for ``spec`` (``user@host`` or ``host``).
+
+    The block points ``IdentityFile`` at ``config/files/<name>``,
+    decrypting it if necessary. If a ``Host <host>`` entry already exists
+    in the SSH config, this is a no-op.
+    """
+    user, host = _parse_user_host(spec)
+    identity = _ensure_loaded(name, config_dir)
+
+    cfg_path = _ssh_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cfg_path.exists():
+        cfg_path.touch(mode=0o600)
+    existing = cfg_path.read_text() if cfg_path.stat().st_size else ""
+
+    if _has_host_block(existing, host):
+        info(f"host '{host}' already in {cfg_path}")
+        return
+
+    block_lines = [f"Host {host}", f"    HostName {host}"]
+    if user:
+        block_lines.append(f"    User {user}")
+    block_lines += [
+        f"    IdentityFile {identity}",
+        "    IdentitiesOnly yes",
+        "",
+    ]
+    block = ("\n" if existing and not existing.endswith("\n") else "") + "\n".join(block_lines) + "\n"
+    with cfg_path.open("a") as f:
+        f.write(block)
+    os.chmod(cfg_path, 0o600)
+    ok(f"installed host '{host}' → {cfg_path}")
+
+
+def uninstall_key(host: str) -> None:
+    """Remove the ``Host <host>`` block from ~/.ssh/config."""
+    cfg_path = _ssh_config_path()
+    if not cfg_path.exists():
+        warn(f"{cfg_path} does not exist; nothing to uninstall")
+        return
+
+    text = cfg_path.read_text()
+    new_text, removed = _remove_host_block(text, host)
+    if not removed:
+        info(f"host '{host}' not found in {cfg_path}")
+        return
+    cfg_path.write_text(new_text)
+    os.chmod(cfg_path, 0o600)
+    ok(f"uninstalled host '{host}' from {cfg_path}")

@@ -9,12 +9,14 @@ import pytest
 from dotconfig.key import (
     gen_key,
     get_key,
+    install_key,
     list_keys,
     load_key,
     pub_key,
     rm_key,
     save_key,
     send_key,
+    uninstall_key,
 )
 
 
@@ -329,6 +331,7 @@ class TestSendKey:
         (keys / "deploy.pub").write_text("ssh-ed25519 AAAA test")
 
         with patch("dotconfig.key.shutil.which", return_value="/usr/bin/ssh-copy-id"), \
+             patch("dotconfig.key._is_sops_encrypted", return_value=False), \
              patch("dotconfig.key.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             send_key("deploy", "user@host.example.com", config_dir=config_dir)
@@ -337,7 +340,9 @@ class TestSendKey:
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "ssh-copy-id"
         assert cmd[-1] == "user@host.example.com"
-        assert "deploy.pub" in cmd[2]
+        # IdentityFile path should point at config/files/, not config/keys/
+        assert str(config_dir / "files" / "deploy.pub") == cmd[2]
+        assert (config_dir / "files" / "deploy").exists()
 
     def test_key_not_found(self, config_dir):
         (config_dir / "keys").mkdir(exist_ok=True)
@@ -361,3 +366,105 @@ class TestSendKey:
         with patch("dotconfig.key.shutil.which", return_value=None):
             with pytest.raises(SystemExit):
                 send_key("deploy", "user@host", config_dir=config_dir)
+
+
+class TestInstallUninstall:
+    def _setup_key(self, config_dir):
+        keys = config_dir / "keys"
+        keys.mkdir(exist_ok=True)
+        (keys / "deploy").write_text("PRIV")
+        (keys / "deploy.pub").write_text("ssh-ed25519 AAAA pub")
+
+    def test_install_creates_block_with_user(self, config_dir, tmp_path):
+        self._setup_key(config_dir)
+        fake_home = tmp_path / "home"
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             patch("dotconfig.key.Path.home", return_value=fake_home):
+            install_key("deploy", "root@web01.example.com", config_dir=config_dir)
+
+        cfg = (fake_home / ".ssh" / "config").read_text()
+        assert "Host web01.example.com" in cfg
+        assert "HostName web01.example.com" in cfg
+        assert "User root" in cfg
+        assert "IdentityFile " in cfg
+        assert str(config_dir / "files" / "deploy") in cfg
+        assert "IdentitiesOnly yes" in cfg
+        assert ((fake_home / ".ssh" / "config").stat().st_mode & 0o777) == 0o600
+
+    def test_install_without_user(self, config_dir, tmp_path):
+        self._setup_key(config_dir)
+        fake_home = tmp_path / "home"
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             patch("dotconfig.key.Path.home", return_value=fake_home):
+            install_key("deploy", "web01.example.com", config_dir=config_dir)
+
+        cfg = (fake_home / ".ssh" / "config").read_text()
+        assert "Host web01.example.com" in cfg
+        assert "User " not in cfg
+
+    def test_install_is_idempotent(self, config_dir, tmp_path):
+        self._setup_key(config_dir)
+        fake_home = tmp_path / "home"
+        cfg_path = fake_home / ".ssh" / "config"
+        cfg_path.parent.mkdir(parents=True)
+        cfg_path.write_text(
+            "Host web01.example.com\n    HostName 1.2.3.4\n    User someone\n"
+        )
+        original = cfg_path.read_text()
+
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             patch("dotconfig.key.Path.home", return_value=fake_home):
+            install_key("deploy", "root@web01.example.com", config_dir=config_dir)
+
+        assert cfg_path.read_text() == original
+
+    def test_install_decrypts_into_files_dir(self, config_dir, tmp_path):
+        self._setup_key(config_dir)
+        fake_home = tmp_path / "home"
+        with patch("dotconfig.key._is_sops_encrypted", return_value=False), \
+             patch("dotconfig.key.Path.home", return_value=fake_home):
+            install_key("deploy", "host.example.com", config_dir=config_dir)
+
+        assert (config_dir / "files" / "deploy").read_text() == "PRIV"
+        assert (config_dir / "files" / "deploy.pub").exists()
+
+    def test_uninstall_removes_block(self, tmp_path):
+        fake_home = tmp_path / "home"
+        cfg_path = fake_home / ".ssh" / "config"
+        cfg_path.parent.mkdir(parents=True)
+        cfg_path.write_text(
+            "Host other.example.com\n"
+            "    HostName 5.6.7.8\n"
+            "Host web01.example.com\n"
+            "    HostName 1.2.3.4\n"
+            "    User root\n"
+            "    IdentityFile /tmp/whatever\n"
+            "Host third.example.com\n"
+            "    HostName 9.9.9.9\n"
+        )
+
+        with patch("dotconfig.key.Path.home", return_value=fake_home):
+            uninstall_key("web01.example.com")
+
+        cfg = cfg_path.read_text()
+        assert "web01.example.com" not in cfg
+        assert "Host other.example.com" in cfg
+        assert "Host third.example.com" in cfg
+
+    def test_uninstall_missing_host_is_noop(self, tmp_path):
+        fake_home = tmp_path / "home"
+        cfg_path = fake_home / ".ssh" / "config"
+        cfg_path.parent.mkdir(parents=True)
+        cfg_path.write_text("Host other.example.com\n    HostName 5.6.7.8\n")
+        original = cfg_path.read_text()
+
+        with patch("dotconfig.key.Path.home", return_value=fake_home):
+            uninstall_key("nonexistent.example.com")
+
+        assert cfg_path.read_text() == original
+
+    def test_uninstall_missing_config_warns(self, tmp_path):
+        fake_home = tmp_path / "home"
+        with patch("dotconfig.key.Path.home", return_value=fake_home):
+            uninstall_key("anything")
+        assert not (fake_home / ".ssh" / "config").exists()
