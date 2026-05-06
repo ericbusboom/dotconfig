@@ -16,6 +16,7 @@ from dotconfig.init import (
     _extract_secret_key,
     _generate_age_key,
     _get_current_user,
+    _init_dotconfig_yaml,
     _init_env_files,
     _is_age_installed,
     _read_key_from_file,
@@ -903,3 +904,181 @@ class TestInitConfigQuietMode:
             with pytest.raises(SystemExit) as exc_info:
                 init_config(config_dir, quiet=True)
         assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# _init_dotconfig_yaml
+# ---------------------------------------------------------------------------
+
+class TestInitDotconfigYaml:
+    """Tests for _init_dotconfig_yaml."""
+
+    def _make_dirs(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Return (config_dir, project_root) with config_dir created."""
+        project_root = tmp_path
+        config_dir = tmp_path / "config"
+        config_dir.mkdir(parents=True)
+        return config_dir, project_root
+
+    # ---- seeding from package.json -----------------------------------------
+
+    def test_seeds_version_from_package_json(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        (project_root / "package.json").write_text('{"version": "1.2.3"}')
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "version: 1.2.3" in content
+
+    def test_package_json_wins_over_pyproject(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        (project_root / "package.json").write_text('{"version": "1.2.3"}')
+        (project_root / "pyproject.toml").write_text(
+            '[project]\nversion = "9.9.9"\n'
+        )
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "version: 1.2.3" in content
+        assert "9.9.9" not in content
+
+    # ---- seeding from pyproject.toml ---------------------------------------
+
+    def test_seeds_version_from_pyproject_when_no_package_json(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        (project_root / "pyproject.toml").write_text(
+            "[project]\nversion = \"0.20260503.7\"\n"
+        )
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "version: 0.20260503.7" in content
+
+    # ---- fallback to 0.0.0 -------------------------------------------------
+
+    def test_seeds_fallback_when_neither_file_present(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "version: 0.0.0" in content
+
+    # ---- file contents / format --------------------------------------------
+
+    def test_written_file_has_header_comments(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "# dotconfig project metadata." in content
+        assert "# Edit `version` only via `dotconfig version bump`." in content
+
+    def test_written_file_has_exact_format(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        expected = (
+            "# dotconfig project metadata.\n"
+            "# Edit `version` only via `dotconfig version bump`.\n"
+            "version: 0.0.0\n"
+        )
+        assert content == expected
+
+    # ---- idempotency -------------------------------------------------------
+
+    def test_existing_file_is_preserved(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        dotconfig_yaml = config_dir / "dotconfig.yaml"
+        original = "version: 5.6.7\nsome_extra_key: value\n"
+        dotconfig_yaml.write_text(original)
+        _init_dotconfig_yaml(config_dir, project_root)
+        assert dotconfig_yaml.read_text() == original
+
+    def test_existing_file_mtime_unchanged(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        dotconfig_yaml = config_dir / "dotconfig.yaml"
+        dotconfig_yaml.write_text("version: 1.0.0\n")
+        mtime = dotconfig_yaml.stat().st_mtime_ns
+        _init_dotconfig_yaml(config_dir, project_root)
+        assert dotconfig_yaml.stat().st_mtime_ns == mtime
+
+    # ---- output ------------------------------------------------------------
+
+    def test_reports_created_for_new_file(self, tmp_path, capsys):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root)
+        out = capsys.readouterr().out
+        assert "created" in out or "+" in out
+
+    def test_reports_ok_for_existing_file(self, tmp_path, capsys):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        (config_dir / "dotconfig.yaml").write_text("version: 1.0.0\n")
+        _init_dotconfig_yaml(config_dir, project_root)
+        out = capsys.readouterr().out
+        assert "ok" in out or "✓" in out
+
+    def test_quiet_mode_no_output(self, tmp_path, capsys):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root, quiet=True)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    def test_quiet_mode_still_creates_file(self, tmp_path):
+        config_dir, project_root = self._make_dirs(tmp_path)
+        _init_dotconfig_yaml(config_dir, project_root, quiet=True)
+        assert (config_dir / "dotconfig.yaml").exists()
+
+    # ---- init_config integration -------------------------------------------
+
+    def test_init_config_creates_dotconfig_yaml(self, tmp_path):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        assert (config_dir / "dotconfig.yaml").exists()
+
+    def test_init_config_seeds_from_package_json(self, tmp_path):
+        config_dir = tmp_path / "config"
+        (tmp_path / "package.json").write_text('{"version": "3.4.5"}')
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        content = (config_dir / "dotconfig.yaml").read_text()
+        assert "version: 3.4.5" in content
+
+    def test_init_config_heading_appears_when_not_quiet(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        out = capsys.readouterr().out
+        assert "Project metadata" in out or "metadata" in out.lower()
+
+    def test_init_config_quiet_no_heading(self, tmp_path, capsys):
+        config_dir = tmp_path / "config"
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=FAKE_SECRET_KEY),
+            patch("dotconfig.init._derive_public_key", side_effect=_fake_derive),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir, quiet=True)
+        out = capsys.readouterr().out
+        assert out == ""
+
+    def test_init_config_preserves_existing_dotconfig_yaml(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        dotconfig_yaml = config_dir / "dotconfig.yaml"
+        original = "version: 9.9.9\ncustom_key: preserved\n"
+        dotconfig_yaml.write_text(original)
+        with (
+            patch("dotconfig.init._discover_age_key", return_value=None),
+            patch("dotconfig.init._is_age_installed", return_value=False),
+            patch("dotconfig.init._get_current_user", return_value="testuser"),
+        ):
+            init_config(config_dir)
+        assert dotconfig_yaml.read_text() == original

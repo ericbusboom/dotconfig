@@ -11,6 +11,7 @@ files are left untouched.
 """
 
 import getpass
+import json
 import os
 import re
 import subprocess
@@ -410,6 +411,68 @@ def _create_env_if_missing(path: Path, quiet: bool = False) -> None:
             ok(str(path))
 
 
+def _init_dotconfig_yaml(
+    config_dir: Path, project_root: Path, quiet: bool = False
+) -> None:
+    """Create ``config/dotconfig.yaml`` if it does not already exist.
+
+    Mirrors the ``_create_env_if_missing`` pattern: if the file is already
+    present it is left untouched and an ``ok`` message is printed (unless
+    *quiet*).  When the file is absent it is created with a seeded version
+    drawn from (in priority order):
+
+    1. ``<project_root>/package.json`` — the ``version`` field.
+    2. ``<project_root>/pyproject.toml`` — ``version = "..."`` under
+       ``[project]``.
+    3. ``"0.0.0"`` — fallback when neither file exists.
+    """
+    path = config_dir / "dotconfig.yaml"
+    if path.exists():
+        if not quiet:
+            ok(str(path))
+        return
+
+    # --- Seed version ---
+    seed = "0.0.0"
+
+    pkg_json = project_root / "package.json"
+    if pkg_json.exists():
+        try:
+            data = json.loads(pkg_json.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "version" in data:
+                seed = str(data["version"])
+        except Exception:
+            pass
+    else:
+        pyproject = project_root / "pyproject.toml"
+        if pyproject.exists():
+            try:
+                text = pyproject.read_text(encoding="utf-8")
+                # Look for version = "..." under [project] section.
+                in_project = False
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("["):
+                        in_project = stripped == "[project]"
+                        continue
+                    if in_project:
+                        m = re.match(r'^version\s*=\s*"([^"]+)"', stripped)
+                        if m:
+                            seed = m.group(1)
+                            break
+            except Exception:
+                pass
+
+    path.write_text(
+        "# dotconfig project metadata.\n"
+        "# Edit `version` only via `dotconfig version bump`.\n"
+        f"version: {seed}\n",
+        encoding="utf-8",
+    )
+    if not quiet:
+        created(str(path))
+
+
 def _init_env_files(config_dir: Path, current_user: str, quiet: bool = False) -> None:
     """Create empty env files for default deployments and the current user.
 
@@ -492,6 +555,11 @@ def init_config(config_dir: Path, quiet: bool = False) -> None:
     # ---- Env-file setup ----------------------------------------
     current_user = _get_current_user()
     _init_env_files(config_dir, current_user, quiet=quiet)
+
+    # ---- Project metadata (dotconfig.yaml) --------------------------------
+    if not quiet:
+        heading("📌 Project metadata:")
+    _init_dotconfig_yaml(config_dir, config_dir.parent, quiet=quiet)
 
     # ---- AGENTS.md -------------------------------------------------------
     if not quiet:
