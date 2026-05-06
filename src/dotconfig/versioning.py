@@ -472,6 +472,10 @@ def bump_version(
     if config_dir is None:
         config_dir = project_root / "config"
 
+    # Ensure config_dir is absolute so relative_to() works correctly.
+    if not config_dir.is_absolute():
+        config_dir = project_root / config_dir
+
     version = compute_next_version(major, config_dir)
 
     # Write source of truth

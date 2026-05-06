@@ -389,6 +389,20 @@ class TestBumpVersion:
         data = json.loads(pkg.read_text())
         assert data["version"] == result["version"]
 
+    def test_relative_config_dir_does_not_raise(self, tmp_path, monkeypatch):
+        """bump_version works when config_dir is a relative path (e.g. Path('config'))."""
+        monkeypatch.chdir(tmp_path)
+        # Create config dir and dotconfig.yaml via the relative path
+        config_dir = Path("config")
+        config_dir.mkdir()
+        (config_dir / "dotconfig.yaml").write_text("version: 0.20260101.1\n")
+        with patch("dotconfig.versioning._get_existing_tags", return_value=[]):
+            result = bump_version(
+                major=0, tag=False, project_root=tmp_path, config_dir=config_dir
+            )
+        assert result["version"]
+        assert result["source"] == "config/dotconfig.yaml"
+
 
 # ---------------------------------------------------------------------------
 # Format engine (sanity checks — ported logic)
