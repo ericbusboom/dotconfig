@@ -1049,3 +1049,90 @@ class TestLoadConfigEmbedFiles:
         import base64
         expected_b64 = base64.b64encode(b"prod_cert").decode()
         assert f"CERT={expected_b64}" in secret_text
+
+
+# ---------------------------------------------------------------------------
+# _VERSION injection from dotconfig.yaml
+# ---------------------------------------------------------------------------
+
+class TestVersionInjection:
+    """Tests for _VERSION= injection in classic .env output."""
+
+    def _make_config_dir(self, tmp_path: Path) -> Path:
+        """Create a minimal config dir with one public env file."""
+        cfg = tmp_path / "config"
+        (cfg / "dev").mkdir(parents=True)
+        (cfg / "dev" / "public.env").write_text("APP=hello\n")
+        return cfg
+
+    def test_version_present_when_dotconfig_yaml_has_version(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.1\n")
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        assert "_VERSION=0.20260506.1" in out.read_text()
+
+    def test_version_appears_before_first_section_marker(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.2\n")
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        text = out.read_text()
+        version_pos = text.find("_VERSION=0.20260506.2")
+        section_pos = text.find("#@dotconfig:")
+        assert version_pos != -1
+        assert section_pos != -1
+        assert version_pos < section_pos
+
+    def test_version_absent_when_dotconfig_yaml_missing(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        # No dotconfig.yaml created
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        assert "_VERSION=" not in out.read_text()
+
+    def test_version_absent_when_dotconfig_yaml_has_no_version_key(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("other_key: some_value\n")
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        assert "_VERSION=" not in out.read_text()
+
+    def test_version_absent_when_version_field_is_empty(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: \n")
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out)
+        assert "_VERSION=" not in out.read_text()
+
+    def test_version_absent_from_json_output(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.3\n")
+        out = tmp_path / ".env.json"
+        load_config("dev", None, cfg, out, fmt="json")
+        text = out.read_text()
+        assert "_VERSION" not in text
+
+    def test_version_absent_from_yaml_output(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.3\n")
+        out = tmp_path / ".env.yaml"
+        load_config("dev", None, cfg, out, fmt="yaml")
+        text = out.read_text()
+        assert "_VERSION" not in text
+
+    def test_version_present_in_split_output(self, tmp_path):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.4\n")
+        out = tmp_path / ".env"
+        load_config("dev", None, cfg, out, split=True)
+        # split writes .env (public) and .env.secret; version goes in public
+        text = out.read_text()
+        assert "_VERSION=0.20260506.4" in text
+
+    def test_version_present_on_stdout(self, tmp_path, capsys):
+        cfg = self._make_config_dir(tmp_path)
+        (cfg / "dotconfig.yaml").write_text("version: 0.20260506.5\n")
+        load_config("dev", None, cfg, None, to_stdout=True)
+        captured = capsys.readouterr()
+        assert "_VERSION=0.20260506.5" in captured.out
