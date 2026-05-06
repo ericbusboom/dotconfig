@@ -11,6 +11,7 @@ optionally deep-merged with a local override layer.
 
 import base64
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -117,9 +118,17 @@ def _serialize_structured(data: Dict[str, Any], suffix: str) -> str:
 def _is_sops_encrypted(filepath: Path) -> bool:
     """Return True if *filepath* appears to be SOPS-encrypted.
 
-    Detection heuristic: SOPS adds a ``sops`` metadata key to JSON and
-    YAML files, and a ``sops_`` prefix to dotenv/ini-style files.  We
-    check for the presence of these markers in the raw file content.
+    Detection heuristic: SOPS adds metadata to every encrypted file. The
+    exact location depends on the format SOPS chose for the file:
+
+    * JSON: top-level ``"sops"`` key
+    * YAML: top-level ``sops:`` mapping
+    * dotenv: ``sops_version=`` / ``sops_mac=`` lines
+    * INI: a trailing ``[sops]`` section (used when the source has
+      ``[section]`` headers, e.g. AWS credentials files)
+
+    We also look for the ubiquitous ``ENC[AES256_GCM,...]`` ciphertext
+    marker as a fallback — sops always wraps encrypted leaves in it.
     """
     try:
         text = filepath.read_text()
@@ -128,10 +137,51 @@ def _is_sops_encrypted(filepath: Path) -> bool:
     # JSON / YAML: top-level "sops" key written by sops
     if '"sops"' in text or "\nsops:\n" in text or text.startswith("sops:\n"):
         return True
-    # dotenv / ini: sops stores metadata as sops_version=, sops_mac=, etc.
+    # dotenv: sops stores metadata as sops_version=, sops_mac=, etc.
     if "sops_version=" in text or "sops_mac=" in text:
         return True
+    # INI: sops appends a "[sops]" metadata section
+    if "\n[sops]\n" in text or text.startswith("[sops]\n"):
+        return True
+    # Fallback: every sops-encrypted leaf is wrapped in ENC[AES256_GCM,...]
+    if "ENC[AES256_GCM," in text:
+        return True
     return False
+
+
+_BINARY_DATA_RE = re.compile(r'"data"\s*:\s*"ENC\[')
+
+
+def _detect_sops_format(text: str) -> Optional[str]:
+    """Detect the sops store format of an encrypted file from its content.
+
+    Returns one of ``binary``, ``json``, ``yaml``, ``dotenv``, ``ini``,
+    or ``None`` when the format can't be inferred. Used to pass explicit
+    ``--input-type`` / ``--output-type`` flags to sops for files whose
+    extension it can't classify (e.g. ``.credentials``, ``.conf``).
+
+    "Binary" mode is what sops uses when it can't classify the input
+    format — it wraps the entire file content as a single ENC string in
+    a JSON object ``{"data": "ENC[...]", "sops": {...}}``. Detecting it
+    matters because passing ``--output-type binary`` makes sops unwrap
+    the ``data`` field so we get the original file content back instead
+    of the JSON wrapper.
+    """
+    if "\n[sops]\n" in text or text.startswith("[sops]\n"):
+        return "ini"
+    if "sops_version=" in text or "sops_mac=" in text:
+        return "dotenv"
+    stripped = text.lstrip()
+    if stripped.startswith("{"):
+        # A JSON sops file is "binary" when its only payload is a
+        # ``data`` field holding a single ENC[...] string. Anything else
+        # is regular JSON store (encrypted leaves throughout).
+        if _BINARY_DATA_RE.search(text):
+            return "binary"
+        return "json"
+    if "\nsops:\n" in text or text.startswith("sops:"):
+        return "yaml"
+    return None
 
 
 def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optional[str]:
@@ -143,11 +193,21 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
     If *sops_config* is provided and exists, it is passed to sops via
     ``--config`` so that a non-dotfile ``sops.yaml`` inside the config
     directory is found even when it would not be auto-discovered.
+
+    For files whose extension sops can't classify (e.g. ``.credentials``),
+    the store format is detected from the file content and passed via
+    ``--input-type`` / ``--output-type`` so sops doesn't default to JSON.
     """
     try:
         cmd = ["sops"]
         if sops_config is not None and sops_config.exists():
             cmd += ["--config", str(sops_config)]
+        try:
+            fmt = _detect_sops_format(filepath.read_text())
+        except OSError:
+            fmt = None
+        if fmt:
+            cmd += ["--input-type", fmt, "--output-type", fmt]
         cmd += ["--decrypt", str(filepath)]
 
         result = subprocess.run(

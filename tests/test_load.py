@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dotconfig.load import _decrypt_sops, _deep_merge, _env_lines_to_dict, _is_sops_encrypted, _split_path, load_config, load_file
+from dotconfig.load import _decrypt_sops, _deep_merge, _detect_sops_format, _env_lines_to_dict, _is_sops_encrypted, _split_path, load_config, load_file
 
 
 @pytest.fixture()
@@ -478,8 +478,79 @@ class TestIsSopsEncrypted:
         f.write_text("KEY=ENC[AES256_GCM,...]\nsops_version=3.7\nsops_mac=...\n")
         assert _is_sops_encrypted(f) is True
 
+    def test_sops_ini_detected(self, tmp_path):
+        """SOPS-encrypted INI files (e.g. AWS credentials with [section]
+        headers) get a trailing ``[sops]`` metadata section."""
+        f = tmp_path / "credentials"
+        f.write_text(
+            "[route53-ro]\n"
+            "aws_access_key_id     = ENC[AES256_GCM,data:abc,type:str]\n"
+            "aws_secret_access_key = ENC[AES256_GCM,data:def,type:str]\n"
+            "\n"
+            "[sops]\n"
+            "mac     = ENC[AES256_GCM,data:xxx,type:str]\n"
+            "version = 3.11.0\n"
+        )
+        assert _is_sops_encrypted(f) is True
+
+    def test_sops_enc_marker_fallback(self, tmp_path):
+        """Files containing the ENC[AES256_GCM,...] ciphertext marker
+        are recognised as encrypted even if the format-specific marker
+        is missing or unusual."""
+        f = tmp_path / "weird.conf"
+        f.write_text("some_key = ENC[AES256_GCM,data:abc,iv:def,tag:ghi,type:str]\n")
+        assert _is_sops_encrypted(f) is True
+
     def test_missing_file_returns_false(self, tmp_path):
         assert _is_sops_encrypted(tmp_path / "nope") is False
+
+
+# ---------------------------------------------------------------------------
+# _detect_sops_format
+# ---------------------------------------------------------------------------
+
+class TestDetectSopsFormat:
+    def test_ini(self):
+        text = (
+            "[section]\nk = ENC[AES256_GCM,data:x,type:str]\n"
+            "\n[sops]\nmac = ENC[...]\n"
+        )
+        assert _detect_sops_format(text) == "ini"
+
+    def test_yaml(self):
+        text = "k: ENC[AES256_GCM,data:x,type:str]\nsops:\n    version: 3.7\n"
+        assert _detect_sops_format(text) == "yaml"
+
+    def test_dotenv(self):
+        text = "K=ENC[AES256_GCM,data:x,type:str]\nsops_version=3.7\n"
+        assert _detect_sops_format(text) == "dotenv"
+
+    def test_binary_mode_detected(self):
+        """SOPS binary store — used when sops can't classify the input
+        type (e.g. .credentials extension). Identified by a single
+        ``"data": "ENC[..."`` payload."""
+        text = (
+            '{\n'
+            '\t"data": "ENC[AES256_GCM,data:abc,type:str]",\n'
+            '\t"sops": {"version": "3.11.0"}\n'
+            '}\n'
+        )
+        assert _detect_sops_format(text) == "binary"
+
+    def test_json_with_structured_payload(self):
+        """JSON store (not binary) — multiple top-level encrypted fields,
+        no single ``data`` ENC wrapper."""
+        text = (
+            '{\n'
+            '\t"username": "ENC[AES256_GCM,data:x,type:str]",\n'
+            '\t"password": "ENC[AES256_GCM,data:y,type:str]",\n'
+            '\t"sops": {"version": "3.11.0"}\n'
+            '}\n'
+        )
+        assert _detect_sops_format(text) == "json"
+
+    def test_unrecognised_returns_none(self):
+        assert _detect_sops_format("just plain text\n") is None
 
 
 # ---------------------------------------------------------------------------
