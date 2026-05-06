@@ -409,7 +409,8 @@ def _parse_env_layers(
             current_section = line[6:-4].strip()
             current_lines = []
         elif current_section is not None:
-            current_lines.append(line)
+            if not line.startswith("_VERSION="):
+                current_lines.append(line)
 
     if current_section is not None:
         sections[current_section] = "\n".join(current_lines).strip()

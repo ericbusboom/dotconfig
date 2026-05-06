@@ -1218,3 +1218,158 @@ class TestSaveConfigAddExport:
 
         local_public = (config_dir / "local" / "alice" / "public.env").read_text()
         assert "export DEV_DOCKER_CONTEXT=orbstack" in local_public
+
+
+# ---------------------------------------------------------------------------
+# _parse_env_layers — _VERSION stripping
+# ---------------------------------------------------------------------------
+
+class TestParseEnvLayersVersionStrip:
+    """_VERSION= lines injected by `dotconfig load` must never survive into
+    section content."""
+
+    def test_version_before_first_section_is_discarded(self):
+        # _VERSION= in the pre-section region is already ignored because those
+        # lines never enter the section-accumulation branch.
+        text = (
+            "_VERSION=0.20260503.1\n"
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP=x\n"
+        )
+        _, _, sections = _parse_env_layers(text)
+        assert "_VERSION" not in sections.get("public (dev)", "")
+
+    def test_version_inside_section_is_stripped(self):
+        # _VERSION= manually (or accidentally) placed inside a section body
+        # must be dropped.
+        text = (
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "_VERSION=0.20260503.1\n"
+            "APP=x\n"
+        )
+        _, _, sections = _parse_env_layers(text)
+        section_body = sections.get("public (dev)", "")
+        assert "_VERSION" not in section_body
+        assert "APP=x" in section_body
+
+    def test_other_keys_preserved_when_version_stripped(self):
+        text = (
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "_VERSION=0.20260503.1\n"
+            "FOO=bar\n"
+            "BAZ=qux\n"
+        )
+        _, _, sections = _parse_env_layers(text)
+        section_body = sections.get("public (dev)", "")
+        assert "FOO=bar" in section_body
+        assert "BAZ=qux" in section_body
+        assert "_VERSION" not in section_body
+
+    def test_no_version_line_unchanged(self):
+        text = (
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP=x\n"
+        )
+        _, _, sections = _parse_env_layers(text)
+        assert sections.get("public (dev)", "") == "APP=x"
+
+
+# ---------------------------------------------------------------------------
+# save_config — _VERSION round-trip strip
+# ---------------------------------------------------------------------------
+
+class TestSaveConfigVersionStrip:
+    """Config files written by save_config must never contain _VERSION=."""
+
+    def test_version_in_presection_does_not_leak_to_output(self, env_file, config_dir):
+        # Simulate a .env produced by `dotconfig load`: _VERSION= appears
+        # before the first section marker.
+        env_file.write_text(
+            "_VERSION=0.20260503.1\n"
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP_DOMAIN=example.com\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=abc123\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+
+        public = (config_dir / "dev" / "public.env").read_text()
+        secrets = (config_dir / "dev" / "secrets.env").read_text()
+        assert "_VERSION" not in public
+        assert "_VERSION" not in secrets
+        assert "APP_DOMAIN=example.com" in public
+        assert "SESSION_SECRET=abc123" in secrets
+
+    def test_version_inside_section_stripped_from_output(self, env_file, config_dir):
+        # If a user (or tooling) placed _VERSION inside a section, save must
+        # strip it from the written config file.
+        env_file.write_text(
+            "# CONFIG_DEPLOY=dev\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "_VERSION=0.20260503.1\n"
+            "APP_DOMAIN=example.com\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SESSION_SECRET=abc123\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+
+        public = (config_dir / "dev" / "public.env").read_text()
+        assert "_VERSION" not in public
+        assert "APP_DOMAIN=example.com" in public
+
+    def test_round_trip_load_output_drops_version(self, env_file, config_dir):
+        # Full round-trip: .env contains _VERSION (as load would inject it),
+        # other key/values must survive, _VERSION must not.
+        env_file.write_text(
+            "_VERSION=0.20260503.7\n"
+            "# CONFIG_DEPLOYS=dev,prod\n"
+            "# CONFIG_LOCALS=alice\n"
+            "\n"
+            "#@dotconfig: public (dev)\n"
+            "APP_DEPLOY=dev\n"
+            "PORT=3000\n"
+            "\n"
+            "#@dotconfig: secrets (dev)\n"
+            "SECRET_DEV=s_dev\n"
+            "\n"
+            "#@dotconfig: public (prod)\n"
+            "APP_DEPLOY=prod\n"
+            "PORT=8080\n"
+            "\n"
+            "#@dotconfig: secrets (prod)\n"
+            "SECRET_PROD=s_prod\n"
+            "\n"
+            "#@dotconfig: public-local (alice)\n"
+            "USER_NAME=alice\n"
+            "\n"
+            "#@dotconfig: secrets-local (alice)\n"
+        )
+        with patch("dotconfig.save._encrypt_sops", side_effect=_fake_encrypt):
+            save_config(env_file, config_dir)
+
+        dev_public = (config_dir / "dev" / "public.env").read_text()
+        prod_public = (config_dir / "prod" / "public.env").read_text()
+        alice_public = (config_dir / "local" / "alice" / "public.env").read_text()
+
+        for content in (dev_public, prod_public, alice_public):
+            assert "_VERSION" not in content
+
+        assert "APP_DEPLOY=dev" in dev_public
+        assert "PORT=3000" in dev_public
+        assert "APP_DEPLOY=prod" in prod_public
+        assert "USER_NAME=alice" in alice_public
