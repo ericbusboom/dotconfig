@@ -1,0 +1,1 @@
+/Users/eric/proj/code-projects/dotconfig/.agents/skills/auto-approve/SKILL.md

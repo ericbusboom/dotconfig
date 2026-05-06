@@ -1,0 +1,1 @@
+/Users/eric/proj/code-projects/dotconfig/.agents/skills/architecture-authoring/SKILL.md
