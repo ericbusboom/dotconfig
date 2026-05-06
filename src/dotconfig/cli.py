@@ -53,6 +53,7 @@ from .key import (
 )
 from .load import load_config, load_file
 from .save import save_config, save_file
+from .versioning import read_dotconfig_version, bump_version
 
 
 def _classify_load_args(
@@ -1057,4 +1058,160 @@ def install_hooks() -> None:
     """
     import sys
     if not install_pre_commit_hook():
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# version group
+# ---------------------------------------------------------------------------
+
+@cli.group(invoke_without_command=True)
+@click.pass_context
+def version(ctx: click.Context) -> None:
+    """Show the project version (or run a subcommand).
+
+    When invoked without a subcommand, prints the current version from
+    ``config/dotconfig.yaml`` and exits.
+
+    \b
+        dotconfig version
+        dotconfig version bump
+        dotconfig version bump --major 1
+        dotconfig version bump --tag
+        dotconfig version bump --push
+    """
+    if ctx.invoked_subcommand is None:
+        import sys
+        cfg = _resolve_config_dir(ctx) or Path("config")
+        v = read_dotconfig_version(cfg)
+        if v is None:
+            click.echo("No version set. Run: dotconfig init", err=True)
+            sys.exit(1)
+        click.echo(v)
+
+
+@version.command("bump")
+@click.option("--major", type=int, default=0,
+              help="Major version segment (default: 0).")
+@click.option("--tag", is_flag=True, default=False,
+              help="Create a lightweight v<version> git tag after bumping.")
+@click.option("-p", "--push", is_flag=True, default=False,
+              help="Commit written files, tag, and push.  Requires clean master/main.")
+@click.pass_context
+def version_bump(ctx: click.Context, major: int, tag: bool, push: bool) -> None:
+    """Compute and write the next version.
+
+    Advances the version in ``config/dotconfig.yaml`` and syncs it to
+    ``pyproject.toml`` and ``package.json`` when they exist.
+
+    With ``--tag``, creates a lightweight ``v<version>`` git tag.
+
+    With ``--push`` (or ``-p``): verifies the working tree is clean and on
+    ``master``/``main``, commits the written files (excluding ``.env``),
+    creates the tag, and runs ``git push --tags``.
+
+    \b
+        dotconfig version bump
+        dotconfig version bump --major 1
+        dotconfig version bump --tag
+        dotconfig version bump --push
+    """
+    import subprocess
+    import sys
+
+    cfg = _resolve_config_dir(ctx) or Path("config")
+    project_root = Path.cwd()
+
+    if push:
+        _preflight_clean_master(project_root)
+
+    result = bump_version(
+        major=major,
+        tag=tag or push,
+        project_root=project_root,
+        config_dir=cfg,
+    )
+
+    click.echo(f"Version: {result['version']}")
+    for p in result.get("synced", []):
+        click.echo(f"  Updated: {p}")
+    if result.get("tag"):
+        click.echo(f"  Tagged:  {result['tag']}")
+
+    if push:
+        # Commit all written files except .env (gitignored).
+        files_to_commit = [
+            str(cfg / "dotconfig.yaml"),
+        ]
+        for filename in result.get("synced", []):
+            if filename not in (".env",):
+                files_to_commit.append(filename)
+
+        # Stage files that actually exist
+        existing = [f for f in files_to_commit if Path(f).exists()]
+        if existing:
+            subprocess.run(["git", "add"] + existing, check=True, cwd=project_root)
+
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", f"chore: bump version to {result['version']}"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if commit_result.returncode != 0:
+            click.echo(f"git commit failed: {commit_result.stderr.strip()}", err=True)
+            sys.exit(1)
+
+        push_result = subprocess.run(
+            ["git", "push", "--follow-tags"],
+            capture_output=True,
+            text=True,
+            cwd=project_root,
+        )
+        if push_result.returncode != 0:
+            click.echo(f"git push failed: {push_result.stderr.strip()}", err=True)
+            sys.exit(1)
+        click.echo("  Pushed.")
+
+
+def _preflight_clean_master(project_root: Path) -> None:
+    """Abort with a message if the working tree is dirty or not on master/main."""
+    import subprocess
+    import sys
+
+    # Check current branch
+    branch_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=project_root,
+    )
+    if branch_result.returncode != 0:
+        click.echo("Not a git repository.", err=True)
+        sys.exit(1)
+    branch = branch_result.stdout.strip()
+    if branch not in ("master", "main"):
+        click.echo(
+            f"--push requires branch master or main; current branch is '{branch}'.",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Check for dirty working tree
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=project_root,
+    )
+    if status_result.returncode != 0:
+        click.echo("Could not determine git status.", err=True)
+        sys.exit(1)
+    if status_result.stdout.strip():
+        click.echo(
+            "--push requires a clean working tree. Commit or stash your changes first.",
+            err=True,
+        )
         sys.exit(1)
