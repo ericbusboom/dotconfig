@@ -1,0 +1,23 @@
+{
+  "name": "docker-nodeapp",
+  "version": "4.20260506.1",
+  "private": true,
+  "scripts": {
+    "dev": "./scripts/dev.sh",
+    "test:server": "cd server && npx vitest run",
+    "test:client": "cd client && npx vitest run",
+    "docker:build": "./scripts/docker.sh build",
+    "docker:up": "./scripts/docker.sh up",
+    "docker:down": "./scripts/docker.sh down",
+    "docker:restart": "./scripts/docker.sh restart",
+    "docker:redeploy": "./scripts/docker.sh redeploy",
+    "docker:logs": "./scripts/docker.sh logs",
+    "docker:shell": "./scripts/docker.sh shell",
+    "docker:ps": "./scripts/docker.sh ps",
+    "redeploy": "./scripts/docker.sh redeploy",
+    "push": "./scripts/push.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
