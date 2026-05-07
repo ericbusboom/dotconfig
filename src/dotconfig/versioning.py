@@ -243,6 +243,45 @@ def write_dotconfig_version(config_dir: Path, version: str) -> None:
         path.write_text(updated, encoding="utf-8")
 
 
+def seed_version_from_sources(project_root: Path) -> str | None:
+    """Return a version string from the first available external source file.
+
+    Priority:
+    1. ``<project_root>/package.json`` — the ``version`` field.
+    2. ``<project_root>/pyproject.toml`` — ``version = "..."`` under ``[project]``.
+
+    Returns the version string, or ``None`` if neither source yields a value.
+    All errors (missing files, malformed content) are silently swallowed.
+    """
+    pkg_json = project_root / "package.json"
+    if pkg_json.exists():
+        try:
+            data = json.loads(pkg_json.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "version" in data:
+                return str(data["version"])
+        except Exception:
+            pass
+
+    pyproject = project_root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            text = pyproject.read_text(encoding="utf-8")
+            in_project = False
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    in_project = stripped == "[project]"
+                    continue
+                if in_project:
+                    m = re.match(r'^version\s*=\s*"([^"]+)"', stripped)
+                    if m:
+                        return m.group(1)
+        except Exception:
+            pass
+
+    return None
+
+
 def load_version_format(config_dir: Path | None = None) -> str:
     """Load the version format from ``config/dotconfig.yaml``.
 

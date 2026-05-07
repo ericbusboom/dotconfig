@@ -19,6 +19,7 @@ from dotconfig.versioning import (
     load_version_format,
     parse_format,
     read_dotconfig_version,
+    seed_version_from_sources,
     update_dotenv_version,
     update_package_json_version,
     update_pyproject_version,
@@ -435,3 +436,67 @@ class TestFormatEngine:
         assert pattern.match("v0.20260503.3")
         assert pattern.match("0.20260503.3")
         assert not pattern.match("0.20260503")
+
+
+# ---------------------------------------------------------------------------
+# seed_version_from_sources
+# ---------------------------------------------------------------------------
+
+class TestSeedVersionFromSources:
+    def test_returns_package_json_version_when_both_exist(self, tmp_path):
+        """package.json takes priority over pyproject.toml."""
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "myapp", "version": "2.3.4"}),
+            encoding="utf-8",
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"myapp\"\nversion = \"9.9.9\"\n",
+            encoding="utf-8",
+        )
+        assert seed_version_from_sources(tmp_path) == "2.3.4"
+
+    def test_returns_pyproject_version_when_only_pyproject_exists(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            "[project]\nname = \"myapp\"\nversion = \"1.2.3\"\n",
+            encoding="utf-8",
+        )
+        assert seed_version_from_sources(tmp_path) == "1.2.3"
+
+    def test_returns_none_when_neither_file_exists(self, tmp_path):
+        assert seed_version_from_sources(tmp_path) is None
+
+    def test_returns_none_when_package_json_has_no_version_field(self, tmp_path):
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "myapp"}),
+            encoding="utf-8",
+        )
+        assert seed_version_from_sources(tmp_path) is None
+
+    def test_returns_none_when_pyproject_has_no_version_under_project(self, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.poetry]\nversion = \"5.0.0\"\n\n[project]\nname = \"myapp\"\n",
+            encoding="utf-8",
+        )
+        assert seed_version_from_sources(tmp_path) is None
+
+    def test_handles_malformed_package_json_gracefully(self, tmp_path):
+        (tmp_path / "package.json").write_text("{not valid json}", encoding="utf-8")
+        assert seed_version_from_sources(tmp_path) is None
+
+    def test_handles_malformed_pyproject_gracefully(self, tmp_path):
+        # pyproject parsing is line-based so a broken file just won't match
+        (tmp_path / "pyproject.toml").write_text(
+            "\x00\x01\x02 not utf8 decodable content" * 10,
+            encoding="latin-1",
+        )
+        assert seed_version_from_sources(tmp_path) is None
+
+    def test_returns_none_when_package_json_exists_but_no_version_falls_back_to_missing_pyproject(
+        self, tmp_path
+    ):
+        """When package.json exists but has no version, and pyproject.toml is absent, return None."""
+        (tmp_path / "package.json").write_text(
+            json.dumps({"name": "myapp"}),
+            encoding="utf-8",
+        )
+        assert seed_version_from_sources(tmp_path) is None

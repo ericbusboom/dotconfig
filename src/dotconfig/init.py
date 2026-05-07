@@ -11,7 +11,6 @@ files are left untouched.
 """
 
 import getpass
-import json
 import os
 import re
 import subprocess
@@ -22,6 +21,7 @@ from typing import List, Optional
 import yaml
 
 from .output import created, error, heading, info, ok, updated, warn
+from .versioning import seed_version_from_sources
 
 # Path regexes used in sops.yaml creation_rules.
 # sops resolves paths relative to the sops.yaml's directory, so these
@@ -433,35 +433,7 @@ def _init_dotconfig_yaml(
         return
 
     # --- Seed version ---
-    seed = "0.0.0"
-
-    pkg_json = project_root / "package.json"
-    if pkg_json.exists():
-        try:
-            data = json.loads(pkg_json.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "version" in data:
-                seed = str(data["version"])
-        except Exception:
-            pass
-    else:
-        pyproject = project_root / "pyproject.toml"
-        if pyproject.exists():
-            try:
-                text = pyproject.read_text(encoding="utf-8")
-                # Look for version = "..." under [project] section.
-                in_project = False
-                for line in text.splitlines():
-                    stripped = line.strip()
-                    if stripped.startswith("["):
-                        in_project = stripped == "[project]"
-                        continue
-                    if in_project:
-                        m = re.match(r'^version\s*=\s*"([^"]+)"', stripped)
-                        if m:
-                            seed = m.group(1)
-                            break
-            except Exception:
-                pass
+    seed = seed_version_from_sources(project_root) or "0.0.0"
 
     path.write_text(
         "# dotconfig project metadata.\n"

@@ -53,7 +53,7 @@ from .key import (
 )
 from .load import load_config, load_file
 from .save import save_config, save_file
-from .versioning import read_dotconfig_version, bump_version
+from .versioning import read_dotconfig_version, bump_version, seed_version_from_sources, write_dotconfig_version
 
 
 def _classify_load_args(
@@ -1079,6 +1079,7 @@ def version(ctx: click.Context) -> None:
         dotconfig version bump --major 1
         dotconfig version bump --tag
         dotconfig version bump --push
+        dotconfig version load
     """
     if ctx.invoked_subcommand is None:
         import sys
@@ -1172,6 +1173,35 @@ def version_bump(ctx: click.Context, major: int, tag: bool, push: bool) -> None:
             click.echo(f"git push failed: {push_result.stderr.strip()}", err=True)
             sys.exit(1)
         click.echo("  Pushed.")
+
+
+@version.command("load")
+@click.pass_context
+def version_load(ctx: click.Context) -> None:
+    """Seed config/dotconfig.yaml version from package.json or pyproject.toml.
+
+    Reads the version from the first available source (package.json
+    takes priority over pyproject.toml) and writes it to
+    config/dotconfig.yaml, overwriting any existing value.
+
+    Exits 1 if neither source file contains a version.
+
+    \b
+        dotconfig version load
+    """
+    import sys
+    cfg = _resolve_config_dir(ctx) or Path("config")
+    project_root = Path.cwd()
+    version = seed_version_from_sources(project_root)
+    if version is None:
+        click.echo(
+            "No version source found. "
+            "Add a 'version' field to package.json or pyproject.toml.",
+            err=True,
+        )
+        sys.exit(1)
+    write_dotconfig_version(cfg, version)
+    click.echo(f"Loaded version: {version}")
 
 
 def _preflight_clean_master(project_root: Path) -> None:
