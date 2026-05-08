@@ -217,6 +217,27 @@ rewrite-at-top approach.
 the sync step is silently skipped. `load` will inject `_VERSION` the next
 time it runs.
 
+## Sprint 003 Addendum (post-execution, ticket 007)
+
+### Modified: `src/dotconfig/versioning.py` (additional helper)
+
+- New public helper `seed_version_from_sources(project_root: Path) -> str | None`.
+  Reads `package.json` version first, then `pyproject.toml [project] version`,
+  returning the first found value or `None` if neither file contains a version.
+  Both `_init_dotconfig_yaml` (in `init.py`) and the new `version load` CLI
+  subcommand delegate to this helper; the duplicate inline parsing code in
+  `_init_dotconfig_yaml` is removed.
+
+### Modified: `src/dotconfig/cli.py` (new subcommand)
+
+- New `version load` subcommand under the existing `version` group.
+  Calls `seed_version_from_sources`, writes the result via
+  `write_dotconfig_version`, prints the loaded version. Exits 1 with a
+  friendly message if neither source file exists.
+
+These additions are consistent with the existing dependency graph
+(`cli.py -> versioning`, `init.py -> versioning`). No new edges added.
+
 ## Open Questions
 
 - Should `version bump --push` also push the branch commits (not just tags)?

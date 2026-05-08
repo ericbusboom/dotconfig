@@ -118,5 +118,6 @@ Before tickets can be created, all of the following must be true:
 | 004 | load.py: _VERSION injection and tests | 001 |
 | 005 | save.py: _VERSION strip and tests | 001 |
 | 006 | End-to-end smoke verification | 002, 003, 004, 005 |
+| 007 | cli.py: version load subcommand | — |
 
-Tickets execute serially in the order listed.
+Tickets execute serially in the order listed. Ticket 007 was added mid-sprint after tickets 001-006 closed; all its prerequisites are already in place.
