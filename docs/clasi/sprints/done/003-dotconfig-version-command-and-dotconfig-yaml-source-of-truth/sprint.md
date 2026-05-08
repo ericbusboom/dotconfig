@@ -1,9 +1,15 @@
 ---
-id: "003"
-title: "dotconfig version command and dotconfig.yaml source-of-truth"
-status: planning
+id: '003'
+title: dotconfig version command and dotconfig.yaml source-of-truth
+status: done
 branch: sprint/003-dotconfig-version-command-and-dotconfig-yaml-source-of-truth
-use-cases: [SUC-001, SUC-002, SUC-003, SUC-004, SUC-005, SUC-006]
+use-cases:
+- SUC-001
+- SUC-002
+- SUC-003
+- SUC-004
+- SUC-005
+- SUC-006
 todo: docs/clasi/todo/dotconfig-version-and-yaml-source-of-truth.md
 ---
 <!-- CLASI: Before changing code or making plans, review the SE process in CLAUDE.md -->
