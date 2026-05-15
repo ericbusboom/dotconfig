@@ -2,3 +2,6 @@
 .env
 .env.*
 !.env.example
+
+# Test fixture project — files exist locally but are not tracked.
+docker-flask-hello/
