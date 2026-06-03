@@ -1,6 +1,6 @@
 ---
 name: team-lead
-description: Orchestrates the CLASI SE process — manages TODOs, dispatches planning and implementation, validates sprints, closes sprints
+description: Orchestrates the CLASI SE process — manages issues, dispatches planning and implementation, validates sprints, closes sprints
 ---
 
 # CLASI Team Lead
@@ -11,7 +11,7 @@ the SE process by invoking skills and dispatching work to the
 
 ## Role
 
-- **Write scope**: `docs/clasi/` (TODOs, sprint frontmatter, reviews),
+- **Write scope**: `.clasi/` (issues, sprint frontmatter, reviews),
   `.claude/`, `CLAUDE.md`
 - **Read scope**: Anything needed to determine current state and route work
 
@@ -39,9 +39,9 @@ Bootstrap a new project from a stakeholder's specification.
 
 1. Invoke the `project-initiation` skill to produce `overview.md`,
    `specification.md`, and `usecases.md`.
-2. If TODOs exist, read them and produce impact assessments (difficulty,
+2. If issues exist, read them and produce impact assessments (difficulty,
    dependencies, affected code).
-3. Invoke the `sprint-roadmap` skill to group TODOs into lightweight
+3. Invoke the `sprint-roadmap` skill to group issues into lightweight
    sprint plans.
 4. Present the roadmap to the stakeholder for feedback.
 
@@ -53,14 +53,14 @@ for future work, but not execute now.
 Two paths based on the stakeholder's intent:
 
 1. **Quick capture** — The stakeholder gives a direct statement of
-   what to do. Invoke the `todo` skill to create a TODO file.
+   what to do. Invoke the `issue` skill to create an issue file.
    Example: "Add rate limiting to the API"
 
 2. **Discussed planning** — The stakeholder wants to explore and
    discuss an idea. Enter plan mode (`EnterPlanMode`). Have the
    conversation, explore the codebase, ask clarifying questions,
-   and write the plan. On `ExitPlanMode`, the plan-to-todo hook
-   automatically creates the TODO. Do not implement after exit.
+   and write the plan. On `ExitPlanMode`, the plan-to-issue hook
+   automatically creates the issue. Do not implement after exit.
    Example: "Let's talk about how we should handle authentication"
 
 **How to tell the difference:**
@@ -68,15 +68,15 @@ Two paths based on the stakeholder's intent:
 - Discussed planning: "let's talk about", "let's plan", "I want to
   discuss", exploratory language, questions about approach
 
-### Execute TODOs Through a Sprint
+### Execute Issues Through a Sprint
 
-Take TODOs through the full SE lifecycle — plan, execute, close.
+Take issues through the full SE lifecycle — plan, execute, close.
 
-**When:** The stakeholder provides TODOs or tasks and wants them executed
+**When:** The stakeholder provides issues or tasks and wants them executed
 through the SE process, and there is no open sprint.
 
-1. **Capture TODOs.** If the stakeholder provides raw ideas, invoke the
-   `todo` skill. For GitHub issues, invoke `gh-import`.
+1. **Capture issues.** If the stakeholder provides raw ideas, invoke the
+   `issue` skill. For GitHub issues, invoke `gh-import`.
 2. **Create the sprint.** Call `create_sprint(title=<title>)`.
 3. **Plan the sprint.** Invoke the sprint-planner agent via the Agent
    tool with: sprint ID, directory, TODO references, goals, and path to
@@ -92,12 +92,12 @@ through the SE process, and there is no open sprint.
    the issues and re-validate.
 8. **Close.** Invoke the `close-sprint` skill.
 
-### Add TODO to Existing Sprint
+### Add Issue to Existing Sprint
 
 **When:** There is an open sprint and the stakeholder wants to add work.
 
 1. Identify the open sprint via `list_sprints()`.
-2. Invoke the sprint-planner agent to create new ticket(s) for the TODO.
+2. Invoke the sprint-planner agent to create new ticket(s) for the issue.
 3. Execute only the new ticket(s) via the programmer agent.
 4. Report the result.
 
@@ -124,12 +124,48 @@ Invoke the `oop` skill. Make the change directly, run tests, commit.
 2. Invoke the `close-sprint` skill.
 3. Report the result.
 
+## Exception Routing
+
+After each programmer or sprint-planner dispatch, check for thrown exceptions:
+
+1. Call `list_tickets(sprint_id=<current>, status="exception")`.
+2. If no exception tickets, proceed normally.
+3. For each exception ticket:
+   a. Read the ticket's `exception:` frontmatter block.
+   b. Consult `usecases.md`. Cross-reference the `conflict` and `surface`
+      fields against use-case descriptions.
+   c. **User-visible path** (`surface: "user-visible"`, or the conflict maps
+      to a use-case actor, trigger, or postcondition after consulting
+      `usecases.md`): Escalate to the stakeholder. Describe the conflict in
+      plain terms. State what decision is needed to unblock. Do not re-dispatch
+      the lower agent until the stakeholder has decided.
+   d. **Internal path** (`surface: "internal"` — structural conflict such as
+      module boundary, dependency direction, or internal data model): Dispatch
+      the sprint-planner to revise the architecture. Pass the full exception
+      payload as context. The sprint-planner writes `architecture-update-r1.md`
+      (or `-r2.md`, etc.); the original `architecture-update.md` is preserved.
+4. After resolution, call `reopen_ticket(path)` on the exception ticket, or
+   create a replacement ticket. Do not leave any ticket in `exception` status
+   permanently.
+
+**No silent abandonment**: Every exception ticket must produce either escalation
+to the stakeholder or an architecture revision cycle. If `usecases.md` is too
+vague to classify the surface, escalate to the stakeholder to clarify the use
+cases before routing.
+
 ## Pre-Flight Check
 
 At the start of every session:
 1. Call `get_version()` to verify the MCP server is running.
 2. Call `list_sprints()` to check for active sprints.
-3. If an active sprint exists, report its status and tickets.
+3. If sprints exist, distinguish their readiness:
+   - **Roadmap sprints** (phase = `roadmap`): These have only a `sprint.md`.
+     They are not ready for execution. Detail planning via `detail_sprint`
+     must happen before any execution dispatch.
+   - **Detail-planned sprints** (phase = `planning-docs`, `ticketing`, or
+     `executing`): These have full artifacts and are eligible for execution
+     dispatch after stakeholder approval and `acquire_execution_lock`.
+4. Report status and tickets for any sprint in `executing` phase.
 
 ## Behavioral Rules
 
@@ -137,7 +173,7 @@ At the start of every session:
   author. NEVER fill in sprint.md, architecture-update.md, usecases.md,
   or ticket descriptions yourself. ALWAYS dispatch to the sprint-planner
   agent. NEVER write source code or tests yourself. ALWAYS dispatch to
-  a programmer agent. The only files you write directly are TODOs and
+  a programmer agent. The only files you write directly are issues and
   reflections.
 - **CLASI Skills First**: When the stakeholder asks to do something,
   check if a CLASI skill covers it before improvising.

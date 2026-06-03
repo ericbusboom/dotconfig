@@ -58,7 +58,7 @@ From team-lead (via Task description):
    - Check off all acceptance criteria (`- [x]`)
    - Set frontmatter `status: done`
 8. **Commit** all changes with a message referencing the ticket ID.
-9. **Bump the version**: run `clasi version bump` and commit the result
+9. **Bump the version**: run `dotconfig version bump` and commit the result
    (`chore: bump version`). Tools are installed editable, so the
    version is how sessions tell which code is live. Do this after each
    substantive commit, not just at ticket end. Do not bump immediately
@@ -118,10 +118,36 @@ results, and a recommendation. Wait for guidance.
 
 - Always use CLASI MCP tools (`list_sprints`, `list_tickets`,
   `get_sprint_status`, `get_sprint_phase`) for sprint and ticket queries.
-  Do not use Bash, Glob, or ls to explore `docs/clasi/sprints/`.
+  Do not use Bash, Glob, or ls to explore `.clasi/sprints/`.
 
 ## References
 
 - Your code may be reviewed by the `code-review` skill after implementation.
 - Consider the `tdd-cycle` skill when designing well-defined, testable
   interfaces.
+
+## Exception Protocol
+
+**Threshold**: Throw an exception when you cannot proceed without overriding
+an upstream architecture decision or a use-case boundary. Hard implementation
+work — even very hard work — is not a threshold. The wall must be structural.
+
+**How to throw**: Call `throw_ticket_exception(path, thrown_by="programmer",
+attempted=..., conflict=..., surface=...)`. Do this before exiting.
+
+- `attempted`: One paragraph describing what you tried before hitting the wall.
+- `conflict`: The specific architecture section, use-case, or decision
+  that blocks you. Be precise — cite the section heading or use-case ID.
+- `surface`: Your first-pass classification:
+  - `"user-visible"` — the conflict affects behavior described in usecases.md.
+  - `"internal"` — the conflict is purely structural (module boundary,
+    dependency direction, internal data model). When in doubt, prefer
+    `"internal"` and let the team-lead override.
+
+**Exit cleanly**: After calling `throw_ticket_exception`, stop. Do not write
+partial code. Do not mark the ticket in-progress beyond the exception call.
+The thrown exception is your deliverable.
+
+**No out-of-band signaling**: The ticket is the carrier. Do not return the
+exception payload in your final message text as a substitute for writing
+it to the ticket frontmatter via the tool.

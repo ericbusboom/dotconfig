@@ -15,13 +15,13 @@ them into sprints.
 
 ## Inputs
 
-- `docs/clasi/design/overview.md` (must exist)
+- `.clasi/design/overview.md` (must exist)
 - Current architecture (if available)
-- TODO files in `docs/clasi/todo/`
+- Issue files in `.clasi/issues/`
 
 ## Process
 
-1. **Read TODOs**: Scan `docs/clasi/todo/` for pending TODO files.
+1. **Read issues**: Scan `.clasi/issues/` for pending issue files.
    Read each to understand the work requested.
 
 2. **Group into sprints** based on:
@@ -33,8 +33,10 @@ them into sprints.
      progress
    - **Difficulty balancing** — Mix complex and straightforward work
 
-3. **Create sprint directories**: For each sprint, use `create_sprint`
-   MCP tool and write a lightweight `sprint.md` with:
+3. **Create sprint directories**: For each sprint, call `create_sprint(title)`.
+   The tool creates the sprint directory and writes a `sprint.md` template
+   with `status: roadmap`. No other files are created at this stage.
+   Edit the generated `sprint.md` to fill in:
    - Sprint goals (what the sprint accomplishes)
    - TODO references (which TODOs are addressed)
    - Rationale for grouping

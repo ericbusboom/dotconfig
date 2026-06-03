@@ -5,7 +5,7 @@ paths:
 
 This project uses the CLASI MCP server. Before doing ANY work:
 
-1. **Check for the OOP override first.** If the file `docs/clasi/oop`
+1. **Check for the OOP override first.** If the file `.clasi/oop`
    exists in the project root, ignore CLASI entirely for this session:
    skip MCP verification, skip all CLASI process gates (sprints,
    tickets, TODOs, artifact rules), and proceed with the user's
@@ -15,7 +15,7 @@ This project uses the CLASI MCP server. Before doing ANY work:
 2. Otherwise, call `get_version()` to verify the MCP server is running.
 3. If the call fails, STOP. Do not proceed. Tell the stakeholder:
    "The CLASI MCP server is not available. Check .mcp.json and
-   restart the session, or create `docs/clasi/oop` to bypass CLASI
+   restart the session, or create `.clasi/oop` to bypass CLASI
    for this session."
 4. Do NOT create sprint directories, tickets, TODOs, or planning
    artifacts manually. Do NOT improvise workarounds. All SE process

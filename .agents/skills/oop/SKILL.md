@@ -30,12 +30,12 @@ The stakeholder may request this mode with a variety of phrases, such as:
 2. Make the change.
 3. Run the full test suite: `uv run pytest`.
 4. If tests pass, commit directly to master with a descriptive message.
-5. Run `clasi version bump` and commit the result (`chore: bump
+5. Run `dotconfig version bump` and commit the result (`chore: bump
    version`). Tools are installed editable, so the version is how
    sessions tell which code is live — bump after every OOP commit.
-6. If the work addressed a TODO (from `docs/clasi/todo/`), call
-   `move_todo_to_done(filename)` to close it. The commit is not the
-   finish line — the TODO lifecycle must be closed too.
+6. If the work addressed an issue (from `.clasi/issues/`), call
+   `move_issue_to_done(filename)` to close it. The commit is not the
+   finish line — the issue lifecycle must be closed too.
 7. If tests fail, fix the issue and re-run.
 
 That's it. No sprint, no tickets, no review gates, no architecture review.
@@ -47,4 +47,4 @@ That's it. No sprint, no tickets, no review gates, no architecture review.
 - Do NOT ask for stakeholder approval at process gates — there are no gates.
 - DO run tests before committing. Tests are never optional.
 - DO write a clear commit message explaining the change.
-- DO run `clasi version bump` after each commit and commit the result.
+- DO run `dotconfig version bump` after each commit and commit the result.

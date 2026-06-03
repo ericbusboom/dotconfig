@@ -21,7 +21,7 @@ This is NOT run automatically on every sprint close.
 ## Process
 
 1. **Identify the base**: Find the latest consolidated architecture in
-   `docs/clasi/architecture/architecture-NNN.md` (highest NNN).
+   `.clasi/architecture/architecture-NNN.md` (highest NNN).
 
 2. **Collect updates**: Find all `architecture-update-MMM.md` where
    MMM > NNN. Read them in order.
@@ -32,13 +32,13 @@ This is NOT run automatically on every sprint close.
 4. **Write the new consolidated document**: Incorporate all changes,
    reflect actual codebase state, include updated Mermaid diagrams.
 
-5. **Save**: Write as `docs/clasi/architecture/architecture-MMM.md`
+5. **Save**: Write as `.clasi/architecture/architecture-MMM.md`
    (where MMM is the latest update sprint number).
 
 6. **Archive**: Move previous consolidated document and incorporated
-   updates to `docs/clasi/architecture/done/`.
+   updates to `.clasi/architecture/done/`.
 
 ## Output
 
-- New `docs/clasi/architecture/architecture-MMM.md`
-- Old files moved to `docs/clasi/architecture/done/`
+- New `.clasi/architecture/architecture-MMM.md`
+- Old files moved to `.clasi/architecture/done/`

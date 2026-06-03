@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "clasi hook status-inject"
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "matcher": ".*",
@@ -79,7 +90,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook plan-to-todo"
+            "command": "clasi hook plan-to-issue"
           }
         ]
       }

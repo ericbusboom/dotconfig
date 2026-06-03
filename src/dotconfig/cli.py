@@ -54,6 +54,7 @@ from .key import (
 from .load import load_config, load_file
 from .save import save_config, save_file
 from .versioning import read_dotconfig_version, bump_version, seed_version_from_sources, write_dotconfig_version
+from .event_hooks import run_hook
 
 
 def _classify_load_args(
@@ -220,6 +221,7 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
         else _resolve_config_dir(ctx) or Path("config")
     )
     init_config(config_dir=cfg, quiet=quiet)
+    run_hook(cfg, "init", [str(cfg.resolve())])
 
 
 @cli.command()
@@ -502,6 +504,13 @@ def load(
             add_export=add_export,
         )
 
+    hook_args = [str(cfg.resolve())]
+    if deploys:
+        hook_args.append(deploys[0])
+    if locals_:
+        hook_args.append(locals_[0])
+    run_hook(cfg, "load", hook_args)
+
 
 @cli.command()
 @click.argument("names", nargs=-1)
@@ -695,6 +704,13 @@ def save(
             flat=flat,
             add_export=add_export,
         )
+
+    hook_args = [str(cfg.resolve())]
+    if deploy:
+        hook_args.append(deploy)
+    if local:
+        hook_args.append(local)
+    run_hook(cfg, "save", hook_args)
 
 
 @cli.group()

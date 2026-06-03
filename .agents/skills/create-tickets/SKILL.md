@@ -24,10 +24,26 @@ agent during planning, but can also be used standalone.
    before features. Record dependencies in each ticket's `depends-on` field.
 4. **Create ticket files**: Use the `create_ticket` MCP tool. Each ticket
    gets `tickets/NNN-slug.md` with:
-   - YAML frontmatter: id, title, status (todo), use-cases, depends-on
+   - YAML frontmatter: id, title, status (open), use-cases, depends-on
    - Description and acceptance criteria (checkboxes)
    - Implementation plan: approach, files to create/modify, testing plan,
      documentation updates
+
+   **Issue lifecycle:** When you call `create_ticket(sprint_id, title,
+   issue=<filename>)`, the referenced issue file is physically moved from
+   `.clasi/issues/` into `<sprint>/issues/` and its frontmatter is updated
+   to `status: in-progress`. When all tickets referencing that issue are
+   moved to done, `Issue.move_to_done()` is called automatically, which
+   moves the file into `<sprint>/issues/done/`. No manual
+   `move_issue_to_done` call is needed in the happy path.
+
+   **Multi-ticket issue propagation:** When multiple tickets implement the
+   same source issue, every ticket must carry the `issue:` back-reference.
+   Use `create_ticket(issue=filename)` for the first ticket. For subsequent
+   tickets, call `add_issue_ref(ticket_path, issue_filename)` after
+   creation. Before returning from ticket creation, verify that every
+   ticket working toward an issue has a non-empty `issue:` field.
+
 5. **Propagate references**: Copy TODO and GitHub issue references to
    ticket frontmatter. List GitHub issues in the sprint doc's
    `## GitHub Issues` section.
@@ -44,7 +60,7 @@ File: `<sprint-dir>/tickets/NNN-slug.md`
 ---
 id: "NNN"
 title: Short title
-status: todo
+status: open
 use-cases: [SUC-001, SUC-002]
 depends-on: [NNN]
 ---

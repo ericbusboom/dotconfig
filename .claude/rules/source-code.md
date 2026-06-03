@@ -6,7 +6,7 @@ paths:
 
 You are modifying source code or tests. Before writing code:
 
-1. If `docs/clasi/oop` exists, the stakeholder has opted out of CLASI
+1. If `.clasi/oop` exists, the stakeholder has opted out of CLASI
    for this session. Skip these gates entirely and proceed.
 2. You must have a ticket in `in-progress` status, or the stakeholder
    said "out of process".

@@ -13,10 +13,12 @@ This skill is **strictly serial**. There is no parallel mode and no
 worktree usage. Re-enabling parallel/worktree execution is a future
 project; see
 `docs/clasi/todo/define-proper-worktree-process-for-parallel-ticket-execution.md`.
+When parallel execution is re-enabled, see
+`docs/clasi/design/worktree-process.md` for the process spec.
 
 ## Inputs
 
-- Active sprint with tickets in `todo` status
+- Active sprint with tickets in `open` status
 - Execution lock acquired (`acquire_execution_lock`)
 - Sprint branch exists and is checked out
 
@@ -38,7 +40,7 @@ There are no execution groups. Tickets run one at a time.
 
 For each ticket in dependency order:
 
-1. Verify the ticket is `todo` and all of its `depends-on` tickets are
+1. Verify the ticket is `open` and all of its `depends-on` tickets are
    `done`. If not, stop and report the inconsistency.
 2. Update the ticket status to `in-progress` via
    `update_ticket_status(path, "in-progress")`.

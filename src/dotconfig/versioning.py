@@ -497,6 +497,7 @@ def bump_version(
     tag: bool = False,
     project_root: Path | None = None,
     config_dir: Path | None = None,
+    run_hooks: bool = True,
 ) -> dict:
     """Compute the next version, update all version files, and optionally tag.
 
@@ -515,6 +516,7 @@ def bump_version(
     if not config_dir.is_absolute():
         config_dir = project_root / config_dir
 
+    old_version = read_dotconfig_version(config_dir) or ""
     version = compute_next_version(major, config_dir)
 
     # Write source of truth
@@ -552,6 +554,11 @@ def bump_version(
     if tag:
         create_version_tag(version)
         tag_name = f"v{version}"
+
+    # Event hook
+    if run_hooks:
+        from .event_hooks import run_hook
+        run_hook(config_dir, "version_bump", [old_version, version])
 
     return {
         "version": version,

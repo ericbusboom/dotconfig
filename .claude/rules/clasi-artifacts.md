@@ -1,11 +1,11 @@
 ---
 paths:
-  - docs/clasi/**
+  - .clasi/**
 ---
 
 You are modifying CLASI planning artifacts. Before making changes:
 
-1. If `docs/clasi/oop` exists, the stakeholder has opted out of CLASI
+1. If `.clasi/oop` exists, the stakeholder has opted out of CLASI
    for this session. Skip these gates entirely and proceed.
 2. Confirm you have an active sprint (`list_sprints(status="active")`),
    or the stakeholder said "out of process" / "direct change".
@@ -14,4 +14,4 @@ You are modifying CLASI planning artifacts. Before making changes:
 4. Use CLASI MCP tools for all artifact operations — do not create
    sprint/ticket/TODO files manually.
 
-Direct edits to `docs/clasi/sprints/` are blocked for team-lead. Use MCP tools.
+Direct edits to `.clasi/sprints/` are blocked for team-lead. Use MCP tools.

@@ -27,15 +27,15 @@ tracking.
 
    If 5 or fewer issues, proceed directly.
 
-5. **Create TODOs**: For each selected issue, create a TODO file in
-   `docs/clasi/todo/` with:
+5. **Create issues**: For each selected issue, create an issue file in
+   `.clasi/issues/` with:
    - Filename: slugified issue title
    - YAML frontmatter: `status: pending`, `github-issue: "owner/repo#N"`
    - Heading: issue title
    - Body: issue body (truncated to first 2000 chars if very long)
    - Source line: `> Imported from [owner/repo#N](url)`
 
-6. **Confirm**: Report how many TODOs were created with issue numbers
+6. **Confirm**: Report how many issues were created with issue numbers
    and corresponding filenames.
 
 ## Example Usage

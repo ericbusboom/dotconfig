@@ -22,7 +22,7 @@ written specification. There are no existing `overview.md`,
 
 1. **Dispatch to the sprint-planner agent** via the Agent tool with:
    - The specification file path
-   - Instruction to write all three documents to `docs/clasi/design/`
+   - Instruction to write all three documents to `.clasi/design/`
 
    The sprint-planner agent writes all three documents. Do not write
    them yourself.
@@ -35,17 +35,17 @@ written specification. There are no existing `overview.md`,
 
 ## Documents the Sprint-Planner Produces
 
-**`docs/clasi/design/overview.md`** — A one-page summary of the
+**`.clasi/design/overview.md`** — A one-page summary of the
 project. An elevator pitch for quick context. It is additive, NOT a
 replacement for the specification.
 
-**`docs/clasi/design/specification.md`** — The full feature
+**`.clasi/design/specification.md`** — The full feature
 specification, preserving ALL stakeholder detail. Exact messages,
 behavior rules, edge cases, test expectations — if the stakeholder
 wrote it, it MUST survive. Reorganize for clarity, but do not lose
 information. Do not summarize, paraphrase, or omit.
 
-**`docs/clasi/design/usecases.md`** — Numbered use cases (UC-001,
+**`.clasi/design/usecases.md`** — Numbered use cases (UC-001,
 UC-002, etc.) extracted from the specification. Each use case has: ID,
 title, actor, preconditions, main flow, postconditions, and error flows.
 
@@ -56,4 +56,4 @@ agent. Your role is orchestration, not authorship.
 
 ## Output
 
-Three documents in `docs/clasi/design/`: overview.md, specification.md, usecases.md.
+Three documents in `.clasi/design/`: overview.md, specification.md, usecases.md.

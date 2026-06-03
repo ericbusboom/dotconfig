@@ -15,17 +15,44 @@ architecture from scratch or a sprint update.
 Design the system architecture from scratch when no architecture document
 exists yet.
 
-Given `docs/clasi/design/overview.md` and `docs/clasi/design/usecases.md`, produce
+Given `.clasi/design/overview.md` and `.clasi/design/usecases.md`, produce
 the first architecture document following steps 1-7 below.
 
 ### Mode 2: Sprint Architecture Update
 
-Write a focused architecture diff describing what changed in this sprint.
-This is an incremental update, not a rewrite.
+Write a focused architecture planning document describing the structural
+changes the sprint will introduce. This artifact is authored after use
+cases are defined and **before tickets exist** — tickets are derived from
+it, not the other way around. The guiding question throughout is: "Is this
+description clear enough that tickets can be derived from it without
+ambiguity?"
+
+At authoring time the document is a structural plan; after the sprint
+closes it accumulates as a historical record (an ADR at sprint
+granularity). It is not merged back into the canonical architecture docs —
+it stands on its own.
 
 Given the sprint plan and current architecture, write
-`architecture-update.md` with: What Changed, Why, Impact on Existing
-Components, Migration Concerns.
+`architecture-update.md` with: Planned Changes, Rationale, Impact on
+Existing Components, Migration Concerns.
+
+### Revision naming and preservation
+
+When an exception loop triggers an architecture revision, **never
+overwrite `architecture-update.md`**. The original must be preserved as a
+calibration signal for future sprint reviews.
+
+Naming convention:
+- First revision: write `architecture-update-r1.md`
+- Subsequent revisions: increment the suffix — `architecture-update-r2.md`,
+  `architecture-update-r3.md`, etc.
+- The latest `-rN.md` file is the active planning artifact.
+- The original `architecture-update.md` and all intermediate revisions
+  remain in the sprint directory as historical record.
+
+The team-lead and sprint-planner both reference this convention. The full
+rule lives here; the sprint-planner agent carries only a brief
+cross-reference.
 
 ## Steps
 

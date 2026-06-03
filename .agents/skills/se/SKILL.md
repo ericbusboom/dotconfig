@@ -16,22 +16,22 @@ to the user and stop — do not execute any skill.
 | Command | Description | Action |
 |---------|-------------|--------|
 | `/se status` | Show project status — sprints, tickets, next actions | Invoke the `project-status` skill |
-| `/se todo <text>` | Create a TODO file from the description | Invoke the `todo` skill |
+| `/se issue <text>` | Create an issue file from the description | Invoke the `issue` skill |
 | `/se init` | Start a new project with a guided interview | Invoke the `project-initiation` skill |
 | `/se report` | Report a bug with the CLASI tools | Invoke the `report` skill |
-| `/se gh-import [repo] [--labels L]` | Import GitHub issues as TODOs | Invoke the `gh-import` skill |
+| `/se gh-import [repo] [--labels L]` | Import GitHub issues as issues | Invoke the `gh-import` skill |
 | `/se knowledge <description>` | Capture hard-won technical understanding | Invoke the `project-knowledge` skill |
 | `/se oop` | Make a quick out-of-process change | Invoke the `oop` skill |
-| `/se plan` | Enter plan mode for a discussed TODO | Enter plan mode via `EnterPlanMode` |
+| `/se plan` | Enter plan mode for a discussed issue | Enter plan mode via `EnterPlanMode` |
 
 Pass any remaining text after the subcommand as the argument to the
-skill (e.g., `/se todo fix the login bug` passes "fix the login bug"
-to the todo skill).
+skill (e.g., `/se issue fix the login bug` passes "fix the login bug"
+to the issue skill).
 
-## When to use /se todo vs /se plan
+## When to use /se issue vs /se plan
 
-- `/se todo <text>`: Quick capture. The user has a clear idea and just
-  wants it recorded. One statement → one TODO file.
+- `/se issue <text>`: Quick capture. The user has a clear idea and just
+  wants it recorded. One statement → one issue file.
 - `/se plan`: The user wants to discuss, explore, and refine an idea
   before capturing it. Enters plan mode for a conversation. On exit,
-  the plan-to-todo hook automatically creates the TODO.
+  the plan-to-issue hook automatically creates the issue.

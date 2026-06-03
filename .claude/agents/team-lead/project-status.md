@@ -15,11 +15,11 @@ stands and what should happen next.
 ## Process
 
 1. **Check artifacts**: Verify which SE documents exist:
-   - `docs/clasi/brief.md`
-   - `docs/clasi/design/usecases.md`
-   - `docs/clasi/architecture/` (versioned architecture documents)
-2. **Check sprints**: Scan `docs/clasi/sprints/` for active sprints and
-   `docs/clasi/sprints/done/` for completed sprints.
+   - `.clasi/brief.md`
+   - `.clasi/design/usecases.md`
+   - `.clasi/architecture/` (versioned architecture documents)
+2. **Check sprints**: Scan `.clasi/sprints/` for active sprints and
+   `.clasi/sprints/done/` for completed sprints.
 3. **Scan tickets**: For each active sprint, read ticket files in the
    sprint's `tickets/` and `tickets/done/` directories. Extract frontmatter
    status for each.
@@ -28,13 +28,13 @@ stands and what should happen next.
    - Brief but no use cases → Stage 1 in progress
    - Use cases but no architecture → Stage 1b (Architecture) needed
    - Architecture exists, no active sprint → Ready for sprint planning
-   - Active sprint with `todo` tickets → Stage 3 (Implementation)
+   - Active sprint with `open` tickets → Stage 3 (Implementation)
    - Active sprint, all tickets `done` → Sprint ready to close
    - No active sprint, all tickets `done` → Stage 4 (Maintenance)
 5. **Report progress**:
    - Artifacts: which exist, their status
    - Sprint: active sprint name, status, branch
-   - Tickets: count by status (todo, in-progress, done)
+   - Tickets: count by status (open, in-progress, done)
    - Next action: what should be done next
 6. **Identify blockers**: Missing dependencies, in-progress tickets without
    plans, tickets with unmet depends-on.

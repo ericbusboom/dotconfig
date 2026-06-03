@@ -242,6 +242,65 @@ Deployment names are open-ended — any valid directory name works.
 
 ---
 
+## Event hooks
+
+dotconfig fires shell scripts on lifecycle events.  Hooks live in
+`config/_bin/` and are named after the event.  They must be executable.
+Missing scripts are silently skipped; a non-zero exit code prints a warning
+but does not abort the dotconfig command.
+
+### Supported events
+
+| Event | Script | Arguments (after `<project_dir>`) |
+|---|---|---|
+| `version_bump` | `config/_bin/version_bump` | `<old_version> <new_version>` |
+| `init` | `config/_bin/init` | `<config_dir>` |
+| `save` | `config/_bin/save` | `<config_dir> [<deploy>] [<local>]` |
+| `load` | `config/_bin/load` | `<config_dir> [<deploy>] [<local>]` |
+
+Every script always receives `<project_dir>` (the repo root, resolved to an
+absolute path) as its first argument.  The remaining arguments are
+event-specific.
+
+### Example: `config/_bin/version_bump`
+
+```bash
+#!/usr/bin/env bash
+# Called after `dotconfig version bump` writes the new version.
+PROJECT_DIR="$1"
+OLD_VERSION="$2"
+NEW_VERSION="$3"
+
+echo "Bumped $OLD_VERSION → $NEW_VERSION in $PROJECT_DIR"
+# e.g. update a CHANGELOG, notify a webhook, etc.
+```
+
+### Example: `config/_bin/load`
+
+```bash
+#!/usr/bin/env bash
+# Called after `dotconfig load` completes.
+PROJECT_DIR="$1"
+CONFIG_DIR="$2"
+DEPLOY="${3:-}"     # may be empty if --file was used without -d
+LOCAL="${4:-}"      # may be empty if no -l was passed
+
+# e.g. post-process the assembled .env
+[ -f "$PROJECT_DIR/.env" ] && chmod 600 "$PROJECT_DIR/.env"
+```
+
+### Arg reference
+
+- `<project_dir>` — absolute path to the project root (parent of `config/`)
+- `<config_dir>` — absolute path to the config directory (e.g. `/…/config`)
+- `<deploy>` — the first deployment name that was loaded/saved (omitted when
+  none was specified)
+- `<local>` — the local/developer name (omitted when none was specified)
+- `<old_version>` / `<new_version>` — the version strings before and after
+  the bump
+
+---
+
 ## SOPS encryption
 
 - Secrets files are encrypted with [SOPS](https://github.com/getsops/sops)
@@ -444,6 +503,7 @@ Quick decision guide for common situations:
 | Check that no plaintext secrets snuck into config/ | `dotconfig audit` |
 | Set up the pre-commit safety net | `dotconfig install-hooks` |
 | Read this manual | `dotconfig --instructions` |
+| Hook into a lifecycle event | place an executable script at `config/_bin/<event>` |
 
 **`-d` vs `-l` mental model.** `-d` selects a *deployment* (shared:
 `dev`, `prod`, `staging`, …). `-l` selects a *local override layer*
@@ -576,3 +636,6 @@ specified a deploy/local that doesn't include it. Check with
 7. **Use `--stdout`** to read config into your context without writing files.
 8. **Use `--file`** with either `-d` or `-l` (not both) to load/save individual
    files like YAML or JSON configs.
+9. **Event hooks** in `config/_bin/` are project-local scripts called after
+   `init`, `load`, `save`, and `version bump`.  They receive the project
+   directory as `$1`; non-zero exit is a warning only, not a hard failure.

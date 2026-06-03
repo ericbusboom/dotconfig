@@ -74,6 +74,14 @@ agent via the Agent tool to fill in full planning artifacts.
    The sprint-planner handles architecture, architecture review, and
    ticket creation inline — no sub-dispatches needed.
 
+   2a. **Split partial-scope issues**: If any issue in scope covers work
+       that cannot all fit in this sprint, call `split_issue` first to
+       carve out the in-scope piece as a separate issue file. The split
+       issue will be a sibling of the original in the same directory.
+       Then call `create_ticket(issue=<split-filename>)` to bring the
+       in-scope piece into the sprint. The remainder stays in the pool
+       or sprint for a future sprint.
+
 3. **Stakeholder review**: Present the completed plan to the stakeholder.
    Record stakeholder approval gate (`record_gate_result`).
 
