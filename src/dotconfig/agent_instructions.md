@@ -245,7 +245,7 @@ Deployment names are open-ended — any valid directory name works.
 ## Event hooks
 
 dotconfig fires shell scripts on lifecycle events.  Hooks live in
-`config/_bin/` and are named after the event.  They must be executable.
+`config/hooks/` and are named after the event.  They must be executable.
 Missing scripts are silently skipped; a non-zero exit code prints a warning
 but does not abort the dotconfig command.
 
@@ -253,16 +253,16 @@ but does not abort the dotconfig command.
 
 | Event | Script | Arguments (after `<project_dir>`) |
 |---|---|---|
-| `version_bump` | `config/_bin/version_bump` | `<old_version> <new_version>` |
-| `init` | `config/_bin/init` | `<config_dir>` |
-| `save` | `config/_bin/save` | `<config_dir> [<deploy>] [<local>]` |
-| `load` | `config/_bin/load` | `<config_dir> [<deploy>] [<local>]` |
+| `version_bump` | `config/hooks/version_bump` | `<old_version> <new_version>` |
+| `init` | `config/hooks/init` | `<config_dir>` |
+| `save` | `config/hooks/save` | `<config_dir> [<deploy>] [<local>]` |
+| `load` | `config/hooks/load` | `<config_dir> [<deploy>] [<local>]` |
 
 Every script always receives `<project_dir>` (the repo root, resolved to an
 absolute path) as its first argument.  The remaining arguments are
 event-specific.
 
-### Example: `config/_bin/version_bump`
+### Example: `config/hooks/version_bump`
 
 ```bash
 #!/usr/bin/env bash
@@ -275,7 +275,7 @@ echo "Bumped $OLD_VERSION → $NEW_VERSION in $PROJECT_DIR"
 # e.g. update a CHANGELOG, notify a webhook, etc.
 ```
 
-### Example: `config/_bin/load`
+### Example: `config/hooks/load`
 
 ```bash
 #!/usr/bin/env bash
@@ -503,7 +503,7 @@ Quick decision guide for common situations:
 | Check that no plaintext secrets snuck into config/ | `dotconfig audit` |
 | Set up the pre-commit safety net | `dotconfig install-hooks` |
 | Read this manual | `dotconfig --instructions` |
-| Hook into a lifecycle event | place an executable script at `config/_bin/<event>` |
+| Hook into a lifecycle event | place an executable script at `config/hooks/<event>` |
 
 **`-d` vs `-l` mental model.** `-d` selects a *deployment* (shared:
 `dev`, `prod`, `staging`, …). `-l` selects a *local override layer*
@@ -636,6 +636,6 @@ specified a deploy/local that doesn't include it. Check with
 7. **Use `--stdout`** to read config into your context without writing files.
 8. **Use `--file`** with either `-d` or `-l` (not both) to load/save individual
    files like YAML or JSON configs.
-9. **Event hooks** in `config/_bin/` are project-local scripts called after
+9. **Event hooks** in `config/hooks/` are project-local scripts called after
    `init`, `load`, `save`, and `version bump`.  They receive the project
    directory as `$1`; non-zero exit is a warning only, not a hard failure.

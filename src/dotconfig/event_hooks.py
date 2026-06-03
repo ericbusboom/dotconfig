@@ -1,6 +1,6 @@
 """Event hook dispatch for dotconfig lifecycle events.
 
-Hooks are executable scripts placed in ``config/_bin/`` named after the
+Hooks are executable scripts placed in ``config/hooks/`` named after the
 event.  Each script is called with event-specific arguments and the
 project directory as the first arg.  Missing scripts are silently skipped.
 Non-zero exit codes are reported as warnings (hooks are advisory).
@@ -22,7 +22,7 @@ from .output import warn
 
 def _hook_path(config_dir: Path, event: str) -> Optional[Path]:
     """Return the path to the hook script for *event*, or None if absent."""
-    candidate = config_dir / "_bin" / event
+    candidate = config_dir / "hooks" / event
     if candidate.exists() and candidate.is_file():
         return candidate
     return None

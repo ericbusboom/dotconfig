@@ -16,7 +16,7 @@ def _make_config_dir(tmp_path: Path) -> Path:
 
 
 def _make_hook(config_dir: Path, event: str, content: str = "#!/bin/sh\nexit 0\n") -> Path:
-    bin_dir = config_dir / "_bin"
+    bin_dir = config_dir / "hooks"
     bin_dir.mkdir(exist_ok=True)
     hook = bin_dir / event
     hook.write_text(content)
@@ -25,13 +25,13 @@ def _make_hook(config_dir: Path, event: str, content: str = "#!/bin/sh\nexit 0\n
 
 
 class TestHookPath:
-    def test_returns_none_when_bin_dir_absent(self, tmp_path):
+    def test_returns_none_whenhooks_dir_absent(self, tmp_path):
         config_dir = _make_config_dir(tmp_path)
         assert _hook_path(config_dir, "version_bump") is None
 
     def test_returns_none_when_script_absent(self, tmp_path):
         config_dir = _make_config_dir(tmp_path)
-        (config_dir / "_bin").mkdir()
+        (config_dir / "hooks").mkdir()
         assert _hook_path(config_dir, "version_bump") is None
 
     def test_returns_path_when_script_exists(self, tmp_path):
@@ -41,8 +41,8 @@ class TestHookPath:
 
     def test_returns_none_for_directory_not_file(self, tmp_path):
         config_dir = _make_config_dir(tmp_path)
-        (config_dir / "_bin").mkdir()
-        (config_dir / "_bin" / "version_bump").mkdir()
+        (config_dir / "hooks").mkdir()
+        (config_dir / "hooks" / "version_bump").mkdir()
         assert _hook_path(config_dir, "version_bump") is None
 
 
