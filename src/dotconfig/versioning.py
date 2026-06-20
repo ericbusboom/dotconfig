@@ -332,7 +332,7 @@ def _get_existing_tags() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def compute_next_version(major: int = 0, config_dir: Path | None = None) -> str:
+def compute_next_version(major: int | None = None, config_dir: Path | None = None) -> str:
     """Compute the next version string based on existing git tags.
 
     Reads the version format from ``config/dotconfig.yaml``.  For formats
@@ -346,16 +346,27 @@ def compute_next_version(major: int = 0, config_dir: Path | None = None) -> str:
     fmt = load_version_format(config_dir)
     parsed = parse_format(fmt)
 
+    current = read_dotconfig_version(config_dir) if config_dir is not None else None
+    tag_pattern = build_tag_regex(parsed)
+
+    # If major is omitted, preserve the existing major from dotconfig.yaml
+    # when it matches the active version format. Fall back to 0 otherwise.
+    effective_major = major
+    if effective_major is None and current:
+        m = tag_pattern.match(current.lstrip("v"))
+        if m and m.groupdict().get("manual_0") is not None:
+            effective_major = int(m.group("manual_0"))
+    if effective_major is None:
+        effective_major = 0
+
     if not format_has_auto(parsed):
         # Fully manual format — return manual values as-is
         manual_count = sum(1 for k, _, _ in parsed if k == "manual")
-        values = [major] + [0] * (manual_count - 1)
+        values = [effective_major] + [0] * (manual_count - 1)
         return build_version(parsed, values)
 
     today = date.today()
     today_str = today.strftime("%Y%m%d")
-    tag_pattern = build_tag_regex(parsed)
-
     def _extract_rev(candidate: str) -> int | None:
         m = tag_pattern.match(candidate.lstrip("v"))
         if not m:
@@ -366,7 +377,7 @@ def compute_next_version(major: int = 0, config_dir: Path | None = None) -> str:
         for kind, _, _ in parsed:
             if kind == "manual":
                 tag_val = int(m.group(f"manual_{manual_idx}"))
-                expected = major if manual_idx == 0 else 0
+                expected = effective_major if manual_idx == 0 else 0
                 if tag_val != expected:
                     return None
                 manual_idx += 1
@@ -395,15 +406,13 @@ def compute_next_version(major: int = 0, config_dir: Path | None = None) -> str:
 
     # Also consider the version currently in dotconfig.yaml so consecutive
     # bumps advance even when --tag is not used.
-    if config_dir is not None:
-        current = read_dotconfig_version(config_dir)
-        if current:
-            rev = _extract_rev(current)
-            if rev is not None:
-                max_rev = max(max_rev, rev)
+    if current:
+        rev = _extract_rev(current)
+        if rev is not None:
+            max_rev = max(max_rev, rev)
 
     manual_count = sum(1 for k, _, _ in parsed if k == "manual")
-    values = [major] + [0] * (manual_count - 1)
+    values = [effective_major] + [0] * (manual_count - 1)
     return build_version(parsed, values, rev=max_rev + 1, today=today)
 
 
@@ -493,7 +502,7 @@ def create_version_tag(version: str) -> None:
 
 
 def bump_version(
-    major: int = 0,
+    major: int | None = None,
     tag: bool = False,
     project_root: Path | None = None,
     config_dir: Path | None = None,
@@ -517,7 +526,7 @@ def bump_version(
         config_dir = project_root / config_dir
 
     old_version = read_dotconfig_version(config_dir) or ""
-    version = compute_next_version(major, config_dir)
+    version = compute_next_version(major=major, config_dir=config_dir)
 
     # Write source of truth
     write_dotconfig_version(config_dir, version)

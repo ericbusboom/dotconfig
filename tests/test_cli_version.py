@@ -123,6 +123,20 @@ class TestVersionBumpCommand:
         data = yaml.safe_load((config_dir / "dotconfig.yaml").read_text())
         assert str(data["version"]).startswith("2.")
 
+    def test_bump_without_major_preserves_existing_major(self, tmp_path, monkeypatch):
+        config_dir = _make_config_dir_with_version(tmp_path, "1.20260101.1")
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        with patch("dotconfig.versioning._get_existing_tags", return_value=[]):
+            result = runner.invoke(
+                cli,
+                ["-c", str(config_dir), "version", "bump"],
+                catch_exceptions=False,
+            )
+        assert result.exit_code == 0
+        data = yaml.safe_load((config_dir / "dotconfig.yaml").read_text())
+        assert str(data["version"]).startswith("1.")
+
     def test_bump_creates_tag_when_tag_flag(self, tmp_path, monkeypatch):
         config_dir = _make_config_dir_with_version(tmp_path, "0.20260101.1")
         monkeypatch.chdir(tmp_path)

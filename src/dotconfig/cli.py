@@ -1108,8 +1108,8 @@ def version(ctx: click.Context) -> None:
 
 
 @version.command("bump")
-@click.option("--major", type=int, default=0,
-              help="Major version segment (default: 0).")
+@click.option("--major", type=int, default=None,
+              help="Major version segment. If omitted, preserve current major.")
 @click.option("--tag", is_flag=True, default=False,
               help="Create a lightweight v<version> git tag after bumping.")
 @click.option("-p", "--push", is_flag=True, default=False,

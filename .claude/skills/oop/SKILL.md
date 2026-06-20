@@ -1,1 +1,1 @@
-/Users/eric/proj/code-projects/dotconfig/.agents/skills/oop/SKILL.md
+/Volumes/Proj/proj/code-projects/dotconfig/.agents/skills/oop/SKILL.md

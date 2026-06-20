@@ -303,6 +303,14 @@ class TestComputeNextVersion:
             v = compute_next_version(major=1, config_dir=config_dir)
         assert v == f"1.{today}.1"
 
+    def test_preserves_existing_major_when_major_omitted(self, tmp_path):
+        config_dir = _make_config_dir(tmp_path)
+        today = self._today_str()
+        (config_dir / "dotconfig.yaml").write_text(f"version: 2.{today}.7\n")
+        with patch("dotconfig.versioning._get_existing_tags", return_value=[]):
+            v = compute_next_version(config_dir=config_dir)
+        assert v == f"2.{today}.8"
+
 
 # ---------------------------------------------------------------------------
 # bump_version
@@ -403,6 +411,14 @@ class TestBumpVersion:
             )
         assert result["version"]
         assert result["source"] == "config/dotconfig.yaml"
+
+    def test_preserves_existing_major_when_major_omitted(self, tmp_path):
+        config_dir = _make_config_dir(tmp_path)
+        today = date.today().strftime("%Y%m%d")
+        (config_dir / "dotconfig.yaml").write_text(f"version: 3.{today}.4\n")
+        with patch("dotconfig.versioning._get_existing_tags", return_value=[]):
+            result = bump_version(project_root=tmp_path, config_dir=config_dir)
+        assert result["version"].startswith("3.")
 
 
 # ---------------------------------------------------------------------------
