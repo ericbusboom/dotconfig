@@ -1,6 +1,6 @@
 # config/ — dotconfig managed environment configuration
 
-This directory is managed by [dotconfig](https://pypi.org/project/dotconfig/),
+This directory is managed by [dotconfig](https://github.com/ericbusboom/dotconfig),
 an environment configuration cascade manager for `.env` files.
 
 ## Quick reference

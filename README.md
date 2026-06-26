@@ -38,13 +38,13 @@ Install with [pipx](https://pipx.pypa.io) so the tool is globally available
 without polluting any project's virtual environment:
 
 ```bash
-pipx install dotconfig
+pipx install git+https://github.com/ericbusboom/dotconfig.git
 ```
 
 Or into a project's own virtual environment:
 
 ```bash
-pip install dotconfig
+pip install git+https://github.com/ericbusboom/dotconfig.git
 ```
 
 Verify the install:

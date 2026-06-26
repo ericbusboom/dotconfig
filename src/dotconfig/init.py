@@ -268,7 +268,7 @@ def _update_sops_yaml(config_dir: Path, public_key: str, quiet: bool = False) ->
 _AGENTS_MD_CONTENT = """\
 # config/ — dotconfig managed environment configuration
 
-This directory is managed by [dotconfig](https://pypi.org/project/dotconfig/),
+This directory is managed by [dotconfig](https://github.com/ericbusboom/dotconfig),
 an environment configuration cascade manager for `.env` files.
 
 ## Quick reference
