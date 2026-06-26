@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dotconfig"
-version = "1.20260619.3"
+version = "1.20260626.1"
 description = "Environment configuration cascade manager for .env files"
 readme = "README.md"
 license = { file = "LICENSE" }
