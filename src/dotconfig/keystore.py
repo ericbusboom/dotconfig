@@ -28,11 +28,11 @@ DEFAULT_KEY_PATH = Path("~/.config/sops/age/keys.txt")
 
 
 class LockedKeyError(Exception):
-    """The age key is locked (wrapped at rest); run ``dotconfig unlock``."""
+    """The age key is locked (wrapped at rest); run ``dotconfig age unlock``."""
 
     exit_code = EXIT_LOCKED
 
-    def __init__(self, message: str = "age key is locked — run: dotconfig unlock"):
+    def __init__(self, message: str = "age key is locked — run: dotconfig age unlock"):
         super().__init__(message)
 
 

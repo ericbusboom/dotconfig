@@ -139,7 +139,7 @@ depending on a shared locked-key guard. A full-size write-up is warranted.
 
 ```mermaid
 graph TD
-    CLI[cli.py: unlock, lock, key wrap] --> Wrap[keywrap.py: wrap/unlock/lock operations]
+    CLI[cli.py: age status/wrap/unlock/lock] --> Wrap[keywrap.py: wrap/unlock/lock operations]
     Status[keys.py: status] --> Store
     Guard[keyguard.py: locked-key check] --> Store
     Load[load.py / save.py / key.py / reencrypt.py] --> Guard
@@ -173,7 +173,7 @@ Modules (new):
 
 Modules (changed): `keys.py` (status: locked/unlocked, methods, verified
 dates, `SOPS_AGE_KEY` warning, no longer recommends `SOPS_AGE_KEY`),
-`cli.py` (new `unlock`, `lock`, `key wrap` commands; thin), and `load.py`,
+`cli.py` (new `age status`, `age wrap`, `age unlock`, `age lock` commands; thin), and `load.py`,
 `save.py`, `key.py` (`load_key`/`get_key` paths that call sops), `reencrypt.py`
 (call the guard before the first sops invocation).
 
@@ -259,7 +259,7 @@ Parent: (new)
 - **Actor**: Key owner
 - **Preconditions**: Plain key exists at `$SOPS_AGE_KEY_FILE`; `age` installed
 - **Main Flow**:
-  1. Owner runs `dotconfig key wrap` with `--se`, `--recipient ... --label ...`,
+  1. Owner runs `dotconfig age wrap` with `--se`, `--recipient ... --label ...`,
      `--yubikey` and/or `--passphrase`.
   2. Each wrapped file is written, then opened via a human-present round trip.
   3. Public key of the result is compared to the original; sidecar updated
@@ -276,7 +276,7 @@ Parent: (new)
 - **Actor**: Key owner (present)
 - **Preconditions**: Key is locked; sidecar and at least one wrapped file exist
 - **Main Flow**:
-  1. Owner runs `dotconfig unlock` (optionally `--with`, `--identity`, `--paste`).
+  1. Owner runs `dotconfig age unlock` (optionally `--with`, `--identity`, `--paste`).
   2. Method chosen by default order; key decrypted to memory.
   3. Public key checked against sidecar; plain file written atomically (0600).
 - **Postconditions**: Plain key at `$SOPS_AGE_KEY_FILE`
@@ -292,7 +292,7 @@ Parent: (new)
 - **Actor**: Key owner, or an unattended job
 - **Preconditions**: Plain key present
 - **Main Flow**:
-  1. `dotconfig lock` verifies a wrapped file + sidecar entry + matching public key.
+  1. `dotconfig age lock` verifies a wrapped file + sidecar entry + matching public key.
   2. Plain key overwritten best-effort and unlinked.
 - **Postconditions**: Only wrapped copies remain
 - **Acceptance Criteria**:
@@ -322,7 +322,7 @@ Parent: (new)
 - **Actor**: Owner, script or agent
 - **Main Flow**: `load`/`save`/`key load`/`reencrypt` run while locked.
 - **Acceptance Criteria**:
-  - [ ] Message `age key is locked — run: dotconfig unlock`, exit code 75, sops not invoked
+  - [ ] Message `age key is locked — run: dotconfig age unlock`, exit code 75, sops not invoked
   - [ ] On a TTY, offers inline unlock; non-TTY fails with message and code
 
 ## GitHub Issues
@@ -352,3 +352,14 @@ Before tickets can be created, all of the following must be true:
 | 007 | Documentation: lock/unlock, manual age -d recovery, stop recommending SOPS_AGE_KEY | 003, 004, 005, 006 |
 
 Tickets execute serially in the order listed.
+
+## Revision
+
+2026-09-30 (ticket 008): the `key` group was overloaded, so all age-key
+commands moved into a dedicated `dotconfig age` group with no top-level
+shortcuts: `age status`, `age wrap` (was `key wrap`), `age unlock` and
+`age lock` (were top-level). `key` is now SSH-only. Wherever this document
+names `unlock`, `lock`, `key wrap` or `keys`, read `age unlock`, `age lock`,
+`age wrap` and `age status`. This also fixes a bug: the lock-state/methods/
+SOPS_AGE_KEY reporting from ticket 005 lived in `keys.show_keys()`, which no
+CLI command invoked; `age status` now exposes it.

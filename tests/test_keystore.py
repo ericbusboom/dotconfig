@@ -129,7 +129,7 @@ def test_runner_seam_is_used(monkeypatch):
 def test_locked_error_constants():
     assert keystore.EXIT_LOCKED == 75
     assert keystore.LockedKeyError().exit_code == 75
-    assert "dotconfig unlock" in str(keystore.LockedKeyError())
+    assert "dotconfig age unlock" in str(keystore.LockedKeyError())
 
 
 @needs_age

@@ -1,4 +1,4 @@
-"""Tests for `dotconfig unlock` (temp SOPS_AGE_KEY_FILE only; never the real key)."""
+"""Tests for `dotconfig age unlock` (temp SOPS_AGE_KEY_FILE only; never the real key)."""
 
 import os
 import pty
@@ -78,7 +78,7 @@ def locked(store, recovery, fake_passphrase):
 
 
 def _unlock(*args):
-    return CliRunner().invoke(cli, ["unlock", *args])
+    return CliRunner().invoke(cli, ["age", "unlock", *args])
 
 
 def test_already_unlocked(store):
@@ -259,7 +259,7 @@ def test_paste_and_identity_exclusive(locked):
 
 
 def test_no_secret_input_options():
-    params = {p.name for p in cli.commands["unlock"].params}
+    params = {p.name for p in cli.commands["age"].commands["unlock"].params}
     assert params == {"with_method", "identity", "paste"}
 
 
@@ -287,7 +287,7 @@ def _run_pty(env, args, payload):
 def test_paste_from_real_tty_no_echo(locked):
     kf, secret, pub, _ = locked
     env = dict(os.environ)
-    code, out = _run_pty(env, ["unlock", "--paste"], secret.encode() + b"\n")
+    code, out = _run_pty(env, ["age", "unlock", "--paste"], secret.encode() + b"\n")
     assert code == 0, out
     assert kf.read_text().strip() == secret
     assert secret not in out  # not echoed
@@ -297,6 +297,6 @@ def test_paste_from_real_tty_no_echo(locked):
 def test_paste_wrong_key_mismatch(locked):
     kf, _, _, _ = locked
     other, _, _ = _gen()
-    code, out = _run_pty(dict(os.environ), ["unlock", "--paste"], other.encode() + b"\n")
+    code, out = _run_pty(dict(os.environ), ["age", "unlock", "--paste"], other.encode() + b"\n")
     assert code != 0
     assert not kf.exists()

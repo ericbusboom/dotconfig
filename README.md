@@ -372,9 +372,9 @@ is printed.
 **Use `SOPS_AGE_KEY_FILE`, not `SOPS_AGE_KEY`.**  sops also accepts the
 secret inline in `SOPS_AGE_KEY`, but dotconfig discourages it: the secret
 then lives in the process environment (inherited by every child process,
-visible in shell history and CI logs) and it survives `dotconfig lock`, so
+visible in shell history and CI logs) and it survives `dotconfig age lock`, so
 [locking the key](#locking-the-age-key-lock--unlock) no longer protects
-anything.  `dotconfig keys` warns when `SOPS_AGE_KEY` is set, and the
+anything.  `dotconfig age status` warns when `SOPS_AGE_KEY` is set, and the
 locked-key guard treats the key as unlocked while it is set.
 
 If `SOPS_AGE_KEY_FILE` is defined inside `.env` itself (e.g. in the
@@ -424,13 +424,13 @@ Files, all next to the key file (`keys.txt` below):
 | `keys.txt` | the plain key (present only while unlocked) |
 | `keys.txt.<method>.age` | wrapped copy of the key, one per method |
 | `keys.txt.lock.yaml` | sidecar: public key, methods, verified dates (no secrets) |
-| `keys.txt.<method>.pending.age` | temporary file during `key wrap`; removed on failure |
+| `keys.txt.<method>.pending.age` | temporary file during `age wrap`; removed on failure |
 
 Method ids: `se` (Secure Enclave), `yubikey`, `pass` (passphrase), or the
 slugified `--label` of an extra recipient (e.g. label `Recovery USB` becomes
 `recovery-usb`).  `se`, `yubikey`, `pass` are reserved.
 
-### Setup: `dotconfig key wrap`
+### Setup: `dotconfig age wrap`
 
 Run while the key is unlocked.  Each wrapped file is written under a
 `*.pending.age` name, opened again (a human-present round trip) and only
@@ -439,33 +439,33 @@ key matches.  A file that fails is deleted; the plain key is never modified.
 
 ```bash
 # passphrase (age prompts on the terminal)
-dotconfig key wrap --passphrase
+dotconfig age wrap --passphrase
 
 # Secure Enclave (age-plugin-se).  The identity file is a non-secret stub that
 # the plugin created; it is needed to verify the round trip and is recorded in
 # the sidecar so `unlock` can find it.
-dotconfig key wrap --se --se-recipient age1se1... --se-identity ~/se-identity.txt
+dotconfig age wrap --se --se-recipient age1se1... --se-identity ~/se-identity.txt
 
 # YubiKey (age-plugin-yubikey), same shape
-dotconfig key wrap --yubikey --yubikey-recipient age1yubikey1... \
+dotconfig age wrap --yubikey --yubikey-recipient age1yubikey1... \
     --yubikey-identity ~/yubikey-identity.txt
 
 # Extra recovery recipient (e.g. an identity on a USB drive).  The identity is
 # used only to verify; the path is NOT recorded, --hint is advisory text.
-dotconfig key wrap --recipient age1... --label "Recovery USB" \
+dotconfig age wrap --recipient age1... --label "Recovery USB" \
     --identity /Volumes/USB/recovery.txt --hint "USB in the safe"
 ```
 
 `--se-recipient` / `--yubikey-recipient` may be omitted when the sidecar
-already records one.  `dotconfig keys` shows the lock state (`locked`,
+already records one.  `dotconfig age status` shows the lock state (`locked`,
 `unlocked` or `not wrapped`) and each method's last verified date.
 
 ### Daily use
 
 ```bash
-dotconfig unlock                  # restore the key for this session
+dotconfig age unlock                  # restore the key for this session
 dotconfig load -d dev -l alice    # ... work ...
-dotconfig lock                    # delete the plain key again
+dotconfig age lock                    # delete the plain key again
 ```
 
 `unlock [--with METHOD] [--identity FILE] [--paste]`:
@@ -485,12 +485,12 @@ public key is recorded; `--force` deletes regardless.  Lock zero-fills the
 file and then unlinks it, but that is **best effort only**: on APFS and SSDs
 (copy-on-write, wear levelling) old blocks may survive, so treat it as raising
 the bar, not as secure erase.  A launchd screen-lock hook that runs
-`dotconfig lock` is a possible follow-up and is not provided yet.
+`dotconfig age lock` is a possible follow-up and is not provided yet.
 
 ### When the key is locked: exit code 75
 
 `load`, `save`, `key get/load/pub` and `reencrypt` check the lock first and,
-before running sops, fail with `age key is locked — run: dotconfig unlock`
+before running sops, fail with `age key is locked — run: dotconfig age unlock`
 and **exit code 75** (distinct from the ordinary failure code 1).  In an
 interactive terminal they offer to unlock inline; in scripts and agents they
 just exit 75.

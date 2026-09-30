@@ -51,7 +51,7 @@ def test_noninteractive_exits_75_with_message(locked, capsys):
     with pytest.raises(SystemExit) as e:
         keyguard.require_unlocked()
     assert e.value.code == 75
-    assert "age key is locked — run: dotconfig unlock" in capsys.readouterr().err
+    assert "age key is locked — run: dotconfig age unlock" in capsys.readouterr().err
 
 
 def test_unlocked_noop(store):

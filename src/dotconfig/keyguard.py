@@ -12,7 +12,7 @@ import sys
 from . import keystore
 from .output import error, info
 
-LOCKED_MESSAGE = "age key is locked — run: dotconfig unlock"
+LOCKED_MESSAGE = "age key is locked — run: dotconfig age unlock"
 
 
 def is_locked() -> bool:

@@ -47,7 +47,7 @@ def _show_lock_state() -> None:
         state = "locked"
     info(f"state: {state} ({kp})")
     if state == "not wrapped":
-        info("Run 'dotconfig key wrap' to keep an encrypted copy of the key.")
+        info("Run 'dotconfig age wrap' to keep an encrypted copy of the key.")
 
     if methods:
         verified = {
@@ -63,7 +63,7 @@ def _show_lock_state() -> None:
 
     if os.environ.get("SOPS_AGE_KEY"):
         warn(
-            "SOPS_AGE_KEY is set in the environment. It survives 'dotconfig lock' "
+            "SOPS_AGE_KEY is set in the environment. It survives 'dotconfig age lock' "
             "and defeats locking; unset it and use SOPS_AGE_KEY_FILE instead."
         )
 
@@ -160,5 +160,5 @@ def show_keys() -> None:
     heading("📋 Using the key:")
     info("Point SOPS at the key file (do not inline the secret in the environment):")
     item(f'  export SOPS_AGE_KEY_FILE="{keystore.key_path()}"')
-    info("Protect it at rest with 'dotconfig key wrap' and 'dotconfig lock'.")
+    info("Protect it at rest with 'dotconfig age wrap' and 'dotconfig age lock'.")
     info("To push the key to GitHub use 'dotconfig gh-push --include-age-key'.")

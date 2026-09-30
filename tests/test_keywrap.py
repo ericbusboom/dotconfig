@@ -138,7 +138,7 @@ def test_mismatched_sidecar_public_key_refuses(store, recovery):
 def test_missing_plain_key_suggests_unlock(store, recovery):
     kf, _, _ = store
     kf.unlink()
-    with pytest.raises(keywrap.WrapError, match="dotconfig unlock"):
+    with pytest.raises(keywrap.WrapError, match="dotconfig age unlock"):
         keywrap.wrap([_recovery_spec(recovery)])
 
 
@@ -222,15 +222,15 @@ def test_build_specs_validation(store, recovery):
 def test_cli_key_wrap_success_and_failure(store, recovery):
     kf, _, _ = store
     idf, pub = recovery
-    r = CliRunner().invoke(cli, ["key", "wrap", "--recipient", pub, "--label",
+    r = CliRunner().invoke(cli, ["age", "wrap", "--recipient", pub, "--label",
                                  "recovery", "--identity", str(idf)])
     assert r.exit_code == 0, r.output
     assert (kf.parent / "keys.txt.recovery.age").exists()
     _, other_pub, _ = _gen()
-    r = CliRunner().invoke(cli, ["key", "wrap", "--recipient", other_pub,
+    r = CliRunner().invoke(cli, ["age", "wrap", "--recipient", other_pub,
                                  "--label", "bad", "--identity", str(idf)])
     assert r.exit_code != 0
     assert not (kf.parent / "keys.txt.bad.age").exists()
     kf.unlink()
-    r = CliRunner().invoke(cli, ["key", "wrap", "--passphrase"])
+    r = CliRunner().invoke(cli, ["age", "wrap", "--passphrase"])
     assert r.exit_code != 0

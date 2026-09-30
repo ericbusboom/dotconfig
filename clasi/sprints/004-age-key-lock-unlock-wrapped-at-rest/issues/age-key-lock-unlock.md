@@ -1,5 +1,5 @@
 ---
-status: done
+status: in-progress
 sprint: '004'
 tickets:
 - 004-001
@@ -9,6 +9,7 @@ tickets:
 - 004-005
 - 004-006
 - 004-007
+- 004-008
 ---
 
 # Lock and unlock the age key file (wrapped at rest, unwrapped per session)

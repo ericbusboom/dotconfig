@@ -72,7 +72,7 @@ def read_plain_key() -> str:
     if not path.exists():
         raise WrapError(
             f"plain key not found at {path}. If the key is locked, run: "
-            f"dotconfig unlock"
+            f"dotconfig age unlock"
         )
     secret = extract_secret(path.read_text())
     if secret is None:
@@ -423,7 +423,7 @@ def unlock(
         if not methods:
             raise UnlockError(
                 "no wrapped key files found next to "
-                f"{kp}; use --paste or --identity FILE, or run 'dotconfig key wrap' "
+                f"{kp}; use --paste or --identity FILE, or run 'dotconfig age wrap' "
                 "while the key is unlocked"
             )
         if with_method:
@@ -466,7 +466,7 @@ def unlock(
         from .output import warn
 
         warn("no sidecar public key to check against (degraded mode); key "
-             "written unverified. Run 'dotconfig key wrap' to record it.")
+             "written unverified. Run 'dotconfig age wrap' to record it.")
     path = keystore.write_plain_key(secret)
     return UnlockResult("unlocked", used, path, degraded)
 
@@ -551,7 +551,7 @@ def lock(force: bool = False) -> LockResult:
         raise LockError(
             "refusing to lock: " + "; ".join(problems) + ". The plain key at "
             f"{kp} was left in place. Create a wrapped copy first with: "
-            "dotconfig key wrap (or pass --force to delete anyway)"
+            "dotconfig age wrap (or pass --force to delete anyway)"
         )
     sidecar = keystore.load_sidecar()
     verified = {m.get("file"): m.get("verified") for m in sidecar["methods"]}

@@ -1,4 +1,4 @@
-"""Tests for `dotconfig lock` (temp SOPS_AGE_KEY_FILE only; never the real key)."""
+"""Tests for `dotconfig age lock` (temp SOPS_AGE_KEY_FILE only; never the real key)."""
 
 import builtins
 import shutil
@@ -55,7 +55,7 @@ def wrapped(store, recovery):
 
 
 def _lock(*args):
-    return CliRunner().invoke(cli, ["lock", *args])
+    return CliRunner().invoke(cli, ["age", "lock", *args])
 
 
 def test_lock_succeeds_with_wrapped_and_sidecar(wrapped):
@@ -81,7 +81,7 @@ def test_refuses_without_wrapped_file(store):
     r = _lock()
     assert r.exit_code != 0
     assert kf.exists()
-    assert "dotconfig key wrap" in r.output
+    assert "dotconfig age wrap" in r.output
 
 
 def test_refuses_without_sidecar(store, recovery):
@@ -90,7 +90,7 @@ def test_refuses_without_sidecar(store, recovery):
     r = _lock()
     assert r.exit_code != 0
     assert kf.exists()
-    assert "dotconfig key wrap" in r.output
+    assert "dotconfig age wrap" in r.output
 
 
 def test_refuses_on_public_key_mismatch(wrapped):
@@ -181,6 +181,6 @@ def test_wrap_then_unlock_with_se_needs_no_identity(store, recovery, monkeypatch
     assert all(r.ok for r in res)
     assert _lock().exit_code == 0
     assert not kf.exists()
-    r = CliRunner().invoke(cli, ["unlock", "--with", "se"])
+    r = CliRunner().invoke(cli, ["age", "unlock", "--with", "se"])
     assert r.exit_code == 0, r.output
     assert kf.read_text().strip() == secret

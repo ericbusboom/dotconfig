@@ -17,6 +17,9 @@ dotconfig save [-d <deployment>] [-l <local>] [--file <name>]
 dotconfig key <subcommand>
     Manage SSH keys (gen, save, get, pub, list, rm, send).
 
+dotconfig age <subcommand>
+    Manage the age key (status, wrap, unlock, lock).
+
 dotconfig gh-push -d <deployment>
     Push deployment secrets to GitHub Actions / Codespaces.
 
@@ -713,7 +716,31 @@ def save(
     run_hook(cfg, "save", hook_args)
 
 
-@cli.command("unlock")
+@cli.group()
+def age() -> None:
+    """Manage the age encryption key (status, wrap, unlock, lock).
+
+    \b
+        dotconfig age status
+        dotconfig age wrap --passphrase
+        dotconfig age unlock
+        dotconfig age lock
+    """
+
+
+@age.command("status")
+def age_status() -> None:
+    """Show the age key, its lock state, wrap methods and warnings.
+
+    \b
+        dotconfig age status
+    """
+    from .keys import show_keys
+
+    show_keys()
+
+
+@age.command("unlock")
 @click.option("--with", "with_method", default=None,
               help="Method to use (se, yubikey, pass, or a wrapped label).")
 @click.option("--identity", type=click.Path(exists=True, dir_okay=False), default=None,
@@ -730,9 +757,9 @@ def unlock_cmd(with_method, identity, paste) -> None:
     $SOPS_AGE_KEY_FILE (mode 0600).
 
     \b
-        dotconfig unlock
-        dotconfig unlock --with pass
-        dotconfig unlock --identity /Volumes/USB/recovery.txt
+        dotconfig age unlock
+        dotconfig age unlock --with pass
+        dotconfig age unlock --identity /Volumes/USB/recovery.txt
     """
     import sys
 
@@ -750,7 +777,7 @@ def unlock_cmd(with_method, identity, paste) -> None:
         _ok(f"unlocked via {r.method}: {r.path}")
 
 
-@cli.command("lock")
+@age.command("lock")
 @click.option("--force", is_flag=True,
               help="Delete the plain key even if no verified wrapped copy exists.")
 def lock_cmd(force) -> None:
@@ -763,8 +790,8 @@ def lock_cmd(force) -> None:
     not guaranteed to erase data on APFS or SSDs.
 
     \b
-        dotconfig lock
-        dotconfig lock --force
+        dotconfig age lock
+        dotconfig age lock --force
     """
     import sys
 
@@ -818,7 +845,7 @@ def key() -> None:
     """
 
 
-@key.command("wrap")
+@age.command("wrap")
 @click.option("--se", "se", is_flag=True, help="Wrap for the Secure Enclave plugin.")
 @click.option("--se-recipient", default=None,
               help="age1se1... recipient (default: from sidecar).")
@@ -839,7 +866,7 @@ def key() -> None:
               help="Identity file used to verify the --recipient round trip.")
 @click.option("--hint", default=None,
               help="Free-text hint (e.g. where the identity lives).")
-def key_wrap(se, se_recipient, se_identity, yubikey, yubikey_recipient,
+def age_wrap(se, se_recipient, se_identity, yubikey, yubikey_recipient,
              yubikey_identity, passphrase, recipient, label, identity, hint) -> None:
     """Wrap the age key at rest and verify each wrapped copy opens.
 
@@ -848,8 +875,8 @@ def key_wrap(se, se_recipient, se_identity, yubikey, yubikey_recipient,
     file that fails is deleted. The plain key is never modified.
 
     \b
-        dotconfig key wrap --passphrase
-        dotconfig key wrap --recipient age1... --label recovery --identity id.txt
+        dotconfig age wrap --passphrase
+        dotconfig age wrap --recipient age1... --label recovery --identity id.txt
     """
     import sys
 
