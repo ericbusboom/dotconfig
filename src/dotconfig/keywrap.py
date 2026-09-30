@@ -575,6 +575,12 @@ def scrub_file(path: Path) -> None:
     path.unlink()
 
 
+SOPS_AGE_KEY_LOCK_WARNING = (
+    "locked, but SOPS_AGE_KEY is set in this environment; this shell and its "
+    "children can still decrypt. Unset it and use SOPS_AGE_KEY_FILE instead."
+)
+
+
 def lock_problems(secret_pub: Optional[str]) -> list[str]:
     """Reasons it is unsafe to delete the plain key (empty list means safe)."""
     problems: list[str] = []

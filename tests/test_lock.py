@@ -184,3 +184,22 @@ def test_wrap_then_unlock_with_se_needs_no_identity(store, recovery, monkeypatch
     r = CliRunner().invoke(cli, ["age", "unlock", "--with", "se"])
     assert r.exit_code == 0, r.output
     assert kf.read_text().strip() == secret
+
+
+def test_lock_warns_when_sops_age_key_set(wrapped, monkeypatch):
+    kf, *_ = wrapped
+    monkeypatch.setenv("SOPS_AGE_KEY", "AGE-SECRET-KEY-FAKE")
+    r = _lock()
+    assert r.exit_code == 0, r.output
+    assert not kf.exists()
+    assert "SOPS_AGE_KEY is set in this environment" in r.output
+    assert "can still decrypt" in r.output
+
+
+def test_lock_no_warning_without_sops_age_key(wrapped, monkeypatch):
+    kf, *_ = wrapped
+    monkeypatch.delenv("SOPS_AGE_KEY", raising=False)
+    r = _lock()
+    assert r.exit_code == 0, r.output
+    assert not kf.exists()
+    assert "SOPS_AGE_KEY" not in r.output

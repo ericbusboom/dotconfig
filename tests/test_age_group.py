@@ -82,3 +82,15 @@ def test_no_stale_command_strings():
     stale = [f"{f.name}: {m.group(0)}" for f in files
              for m in pat.finditer(f.read_text())]
     assert stale == []
+
+
+def test_age_status_unrecorded_wrapped_file_wording(keyfile, monkeypatch):
+    from dotconfig import keys
+
+    monkeypatch.setattr(keys, "_is_age_installed", lambda: True)
+    keyfile.write_text("# nothing\n")
+    keyfile.with_name("keys.txt.pass.age").write_text("x")
+    r = _run("age", "status")
+    assert r.exit_code == 0
+    assert "not recorded; run: dotconfig age wrap --passphrase" in r.output
+    assert "to verify and record it" in r.output

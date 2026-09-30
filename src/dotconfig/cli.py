@@ -842,6 +842,7 @@ def lock_cmd(force) -> None:
         dotconfig age lock
         dotconfig age lock --force
     """
+    import os
     import sys
 
     from . import keywrap
@@ -874,6 +875,8 @@ def lock_cmd(force) -> None:
         return
     _ok(f"locked: removed {r.path} (best-effort zero-fill; not guaranteed on "
         f"APFS/SSD)")
+    if os.environ.get("SOPS_AGE_KEY"):
+        _warn(keywrap.SOPS_AGE_KEY_LOCK_WARNING)
     for m in r.methods or []:
         v = (r.verified or {}).get(m.method_id)
         _ok(f"  can unlock with {m.method_id}"
