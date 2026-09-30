@@ -138,10 +138,23 @@ class TestLockState:
 
 
 class TestSopsAgeKeyWarning:
-    def test_warns_when_set(self, capsys, monkeypatch):
+    def test_locked_uses_locked_wording(self, capsys, tmp_path, monkeypatch):
+        _make_wrapped(tmp_path)
         monkeypatch.setenv("SOPS_AGE_KEY", FAKE_SECRET_KEY)
         out = _status(capsys, False)
+        assert "state: locked" in out
+        assert "locked, but SOPS_AGE_KEY is set" in out
         assert "can still decrypt" in out and "SOPS_AGE_KEY_FILE" in out
+
+    def test_unlocked_uses_neutral_wording(self, capsys, tmp_path, monkeypatch):
+        kf = _make_wrapped(tmp_path)
+        kf.write_text(FAKE_SECRET_KEY)
+        monkeypatch.setenv("SOPS_AGE_KEY", FAKE_SECRET_KEY)
+        out = _status(capsys, True)
+        assert "state: unlocked" in out
+        assert "locked, but" not in out
+        assert "survives 'dotconfig age lock'" in out
+        assert "SOPS_AGE_KEY_FILE" in out
 
     def test_no_warning_when_unset(self, capsys):
         out = _status(capsys, False)

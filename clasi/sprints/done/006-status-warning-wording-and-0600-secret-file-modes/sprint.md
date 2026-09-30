@@ -1,7 +1,7 @@
 ---
 id: '006'
 title: Status warning wording and 0600 secret file modes
-status: ticketing
+status: done
 branch: sprint/006-status-warning-wording-and-0600-secret-file-modes
 use-cases: []
 issues:
