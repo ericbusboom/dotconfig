@@ -1,8 +1,10 @@
 ---
 id: '002'
 title: lock warns on SOPS_AGE_KEY; status wording for unrecorded wrapped files
-status: open
-use-cases: [SUC-002, SUC-003]
+status: done
+use-cases:
+- SUC-002
+- SUC-003
 depends-on: []
 github-issue: ''
 issue: age-unlock-identity-review-findings.md
@@ -18,10 +20,10 @@ Finding 2 and 4. `age lock` prints the same warning as `status` when `SOPS_AGE_K
 
 ## Acceptance Criteria
 
-- [ ] `lock` with SOPS_AGE_KEY set locks, exits 0, prints the warning
-- [ ] `lock` without SOPS_AGE_KEY prints no such warning
-- [ ] `status` wording for an unrecorded wrapped file names the command to run
-- [ ] Tests use existing conftest isolation
+- [x] `lock` with SOPS_AGE_KEY set locks, exits 0, prints the warning
+- [x] `lock` without SOPS_AGE_KEY prints no such warning
+- [x] `status` wording for an unrecorded wrapped file names the command to run
+- [x] Tests use existing conftest isolation
 
 ## Testing
 

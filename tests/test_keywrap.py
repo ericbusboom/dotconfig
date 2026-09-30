@@ -234,3 +234,83 @@ def test_cli_key_wrap_success_and_failure(store, recovery):
     kf.unlink()
     r = CliRunner().invoke(cli, ["age", "wrap", "--passphrase"])
     assert r.exit_code != 0
+
+
+# ---- recipient derivation from the plugin identity file (ticket 005-003) ----
+
+SE_PUB = "age1se1qexamplerecipient"
+YK_PUB = "age1yubikey1qexamplerecipient"
+
+
+def _plugin_identity(tmp_path, name, comment, secret="AGE-PLUGIN-SE-1FAKE"):
+    f = tmp_path / name
+    f.write_text(f"# created: now\n{comment}\n{secret}\n")
+    return f
+
+
+@pytest.fixture
+def fake_se(monkeypatch):
+    """Pretend age-plugin-se is installed; `recipients -i` prints SE_PUB."""
+    real = keystore.runner
+    calls = []
+    monkeypatch.setattr(keystore, "_require", lambda b, i: None)
+
+    def runner(cmd, input=None, interactive=False, **kw):
+        if cmd[0] == "age-plugin-se":
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, (SE_PUB + "\n").encode(), b"")
+        return real(cmd, input=input, interactive=interactive, **kw)
+
+    monkeypatch.setattr(keystore, "runner", runner)
+    return calls
+
+
+def test_se_recipient_derived_via_plugin(store, tmp_path, fake_se):
+    idf = _plugin_identity(tmp_path, "se.txt", "# public key: age1se1qother")
+    (s,) = keywrap.build_specs(se=True, se_identity=idf)
+    assert s.recipient == SE_PUB
+    assert fake_se and fake_se[0][1:] == ["recipients", "-i", str(idf)]
+
+
+def test_se_recipient_falls_back_to_comment(store, tmp_path, monkeypatch):
+    def boom(cmd, input=None, interactive=False, **kw):
+        if cmd[0] == "age-plugin-se":
+            return subprocess.CompletedProcess(cmd, 1, b"", b"nope")
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(keystore, "_require", lambda b, i: None)
+    monkeypatch.setattr(keystore, "runner", boom)
+    idf = _plugin_identity(tmp_path, "se.txt", f"# public key: {SE_PUB}")
+    (s,) = keywrap.build_specs(se=True, se_identity=idf)
+    assert s.recipient == SE_PUB
+
+
+def test_yubikey_recipient_from_comment(store, tmp_path):
+    idf = _plugin_identity(tmp_path, "yk.txt", f"#    Recipient: {YK_PUB}",
+                           "AGE-PLUGIN-YUBIKEY-1FAKE")
+    (s,) = keywrap.build_specs(yubikey=True, yubikey_identity=idf)
+    assert s.recipient == YK_PUB
+
+
+def test_explicit_recipient_beats_derivation(store, tmp_path, fake_se):
+    idf = _plugin_identity(tmp_path, "se.txt", f"# public key: {SE_PUB}")
+    (s,) = keywrap.build_specs(se=True, se_identity=idf, se_recipient="age1se1explicit")
+    assert s.recipient == "age1se1explicit" and not fake_se
+
+
+def test_sidecar_beats_derivation(store, tmp_path, fake_se):
+    keystore.save_sidecar({"methods": [{"kind": "se", "recipient": "age1se1recorded"}]})
+    idf = _plugin_identity(tmp_path, "se.txt", f"# public key: {SE_PUB}")
+    (s,) = keywrap.build_specs(se=True, se_identity=idf)
+    assert s.recipient == "age1se1recorded" and not fake_se
+
+
+def test_derivation_failure_is_clear_error(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(keystore, "_require", lambda b, i: (_ for _ in ()).throw(
+        keystore.AgeToolError("age-plugin-se not found")))
+    idf = _plugin_identity(tmp_path, "se.txt", "# no key comment here")
+    with pytest.raises(keywrap.WrapError, match="could not be derived"):
+        keywrap.build_specs(se=True, se_identity=idf)
+    yk = _plugin_identity(tmp_path, "yk.txt", "# nothing", "AGE-PLUGIN-YUBIKEY-1F")
+    with pytest.raises(keywrap.WrapError, match="could not be derived"):
+        keywrap.build_specs(yubikey=True, yubikey_identity=yk)

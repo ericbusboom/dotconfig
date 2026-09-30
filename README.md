@@ -471,8 +471,10 @@ dotconfig age wrap --recipient age1... --label "Recovery USB" \
     --identity /Volumes/USB/recovery.txt --hint "USB in the safe"
 ```
 
-`--se-recipient` / `--yubikey-recipient` may be omitted when the sidecar
-already records one.  `dotconfig age status` shows the lock state (`locked`,
+`--se-recipient` / `--yubikey-recipient` may be omitted: the recipient is
+taken from the sidecar if one is recorded, otherwise derived from the identity
+file (`age-plugin-se recipients -i FILE`, or the `# public key:` /
+`# Recipient:` comment in the file).  An explicit flag always wins.  `dotconfig age status` shows the lock state (`locked`,
 `unlocked` or `not wrapped`) and each method's last verified date.
 
 ### Daily use
@@ -488,7 +490,8 @@ dotconfig age lock                    # delete the plain key again
 - default order: Secure Enclave (GUI session only), YubiKey (device present),
   passphrase; `--with se|yubikey|pass|<label>` picks one method
 - `--identity FILE` opens a wrapped file with an age identity (e.g. on a USB
-  drive), `--paste` reads `AGE-SECRET-KEY-1...` from a hidden prompt (real TTY
+  drive; a passphrase-protected identity is decrypted once, then matched to
+  the wrapped file by recipient), `--paste` reads `AGE-SECRET-KEY-1...` from a hidden prompt (real TTY
   only; the key is never read from a pipe, flag or environment variable)
 - the recovered key's public key must match the sidecar, and it is written
   only to `$SOPS_AGE_KEY_FILE` with mode 0600; if already unlocked it says so

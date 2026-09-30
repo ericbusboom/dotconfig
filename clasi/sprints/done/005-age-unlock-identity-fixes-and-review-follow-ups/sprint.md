@@ -1,7 +1,7 @@
 ---
 id: '005'
 title: Age unlock identity fixes and review follow-ups
-status: ticketing
+status: done
 branch: sprint/005-age-unlock-identity-fixes-and-review-follow-ups
 use-cases: []
 issues:

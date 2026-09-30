@@ -50,22 +50,25 @@ def _show_lock_state() -> None:
         info("Run 'dotconfig age wrap' to keep an encrypted copy of the key.")
 
     if methods:
-        verified = {
+        recorded = {
             m.get("file"): m.get("verified")
             for m in keystore.load_sidecar()["methods"]
         }
         heading("Wrapped methods:")
         for m in methods:
-            when = verified.get(m.path.name)
-            when_txt = f"verified {when}" if when else "never verified"
+            if m.path.name not in recorded:
+                when_txt = (
+                    f"not recorded; run: dotconfig age wrap --{m.kind} "
+                    "to verify and record it"
+                )
+            else:
+                when = recorded[m.path.name]
+                when_txt = f"verified {when}" if when else "never verified"
             label = f" {m.label}" if m.label else ""
             item(f"  {m.kind}{label} — {when_txt}")
 
     if os.environ.get("SOPS_AGE_KEY"):
-        warn(
-            "SOPS_AGE_KEY is set in the environment. It survives 'dotconfig age lock' "
-            "and defeats locking; unset it and use SOPS_AGE_KEY_FILE instead."
-        )
+        warn(keywrap.SOPS_AGE_KEY_LOCK_WARNING)
 
 
 def show_keys() -> None:

@@ -141,7 +141,7 @@ class TestSopsAgeKeyWarning:
     def test_warns_when_set(self, capsys, monkeypatch):
         monkeypatch.setenv("SOPS_AGE_KEY", FAKE_SECRET_KEY)
         out = _status(capsys, False)
-        assert "survives" in out and "SOPS_AGE_KEY_FILE" in out
+        assert "can still decrypt" in out and "SOPS_AGE_KEY_FILE" in out
 
     def test_no_warning_when_unset(self, capsys):
         out = _status(capsys, False)
