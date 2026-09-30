@@ -169,6 +169,10 @@ def _record(sidecar: dict, spec: MethodSpec, filename: str, verified: str) -> No
         "verified": verified,
         "hint": spec.hint,
     }
+    # Plugin identity files are non-secret stubs, so record where they live
+    # to let `unlock` find them. The recovery (identity) key stays a hint only.
+    if spec.kind in ("se", "yubikey") and spec.identity_file is not None:
+        entry["identity_file"] = str(Path(spec.identity_file).expanduser().resolve())
     methods = [m for m in sidecar["methods"] if m.get("file") != filename]
     methods.append(entry)
     sidecar["methods"] = methods
@@ -465,3 +469,93 @@ def unlock(
              "written unverified. Run 'dotconfig key wrap' to record it.")
     path = keystore.write_plain_key(secret)
     return UnlockResult("unlocked", used, path, degraded)
+
+
+# ---------------------------------------------------------------------------
+# Lock
+# ---------------------------------------------------------------------------
+#
+# Lock needs no secret and asks nothing: it never prompts and never reads
+# stdin, so it is safe to run unattended (cron, hooks, screen-lock).
+
+
+class LockError(Exception):
+    """Lock refused; the plain key file was left in place."""
+
+
+@dataclass
+class LockResult:
+    status: str  # "already-locked" | "locked"
+    forced: bool = False
+    path: Optional[Path] = None
+    methods: Optional[list[WrappedMethod]] = None
+    verified: Optional[dict] = None  # method_id -> verified date or None
+
+
+def scrub_file(path: Path) -> None:
+    """Best-effort zero-fill then unlink.
+
+    Not guaranteed to destroy the data on APFS / SSDs (copy-on-write and wear
+    levelling may keep old blocks); it only raises the bar."""
+    try:
+        size = path.stat().st_size
+        with open(path, "r+b") as f:
+            f.write(b"\0" * size)
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass  # still unlink below
+    path.unlink()
+
+
+def lock_problems(secret_pub: Optional[str]) -> list[str]:
+    """Reasons it is unsafe to delete the plain key (empty list means safe)."""
+    problems: list[str] = []
+    sidecar = keystore.load_sidecar()
+    recorded = sidecar.get("public_key")
+    methods, from_sidecar = list_wrapped()
+    if not methods:
+        problems.append("no wrapped key file exists next to the key")
+    elif not from_sidecar:
+        problems.append("no sidecar records the wrapped files")
+    if not recorded:
+        problems.append("sidecar has no public_key to check the key against")
+    elif secret_pub is None:
+        problems.append("could not derive the plain key's public key")
+    elif recorded != secret_pub:
+        problems.append(
+            f"sidecar public_key ({recorded}) differs from the plain key's "
+            f"({secret_pub})"
+        )
+    return problems
+
+
+def lock(force: bool = False) -> LockResult:
+    """Remove the plain key file when at least one verified-recorded wrapped
+    copy exists for the same public key. ``force`` deletes regardless."""
+    kp = keystore.key_path()
+    if not kp.exists():
+        return LockResult("already-locked", path=kp)
+
+    secret_pub: Optional[str] = None
+    try:
+        secret = extract_secret(kp.read_text())
+        if secret is not None:
+            secret_pub = keystore.public_key_of(secret)
+    except (AgeToolError, OSError):
+        secret_pub = None
+
+    problems = lock_problems(secret_pub)
+    methods, _ = list_wrapped()
+    if problems and not force:
+        raise LockError(
+            "refusing to lock: " + "; ".join(problems) + ". The plain key at "
+            f"{kp} was left in place. Create a wrapped copy first with: "
+            "dotconfig key wrap (or pass --force to delete anyway)"
+        )
+    sidecar = keystore.load_sidecar()
+    verified = {m.get("file"): m.get("verified") for m in sidecar["methods"]}
+    by_id = {m.method_id: verified.get(m.path.name) for m in methods}
+    scrub_file(kp)
+    return LockResult("locked", forced=bool(problems), path=kp, methods=methods,
+                      verified=by_id)

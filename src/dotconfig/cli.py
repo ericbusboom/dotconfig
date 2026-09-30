@@ -750,6 +750,60 @@ def unlock_cmd(with_method, identity, paste) -> None:
         _ok(f"unlocked via {r.method}: {r.path}")
 
 
+@cli.command("lock")
+@click.option("--force", is_flag=True,
+              help="Delete the plain key even if no verified wrapped copy exists.")
+def lock_cmd(force) -> None:
+    """Remove the plain age key file, only when that is safe.
+
+    Needs no secret, asks no questions, never reads stdin: safe to run
+    unattended. Exits 0 if already locked. Refuses unless a wrapped file
+    exists, is recorded in the sidecar, and the sidecar's public key matches
+    the plain key. Deletion is a best-effort zero-fill then unlink; this is
+    not guaranteed to erase data on APFS or SSDs.
+
+    \b
+        dotconfig lock
+        dotconfig lock --force
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok, warn as _warn
+
+    if force:
+        # Report what is at stake before deleting anything.
+        try:
+            methods, _ = keywrap.list_wrapped()
+            kp = keywrap.keystore.key_path()
+            if kp.exists():
+                secret = keywrap.extract_secret(kp.read_text())
+                pub = keywrap.keystore.public_key_of(secret) if secret else None
+                problems = keywrap.lock_problems(pub)
+                if problems:
+                    _warn("--force: deleting " + str(kp) + " although: "
+                          + "; ".join(problems)
+                          + ". The key will be UNRECOVERABLE unless you have "
+                          "another copy.")
+        except Exception:
+            _warn("--force: deleting the key without safety checks; it may be "
+                  "unrecoverable.")
+    try:
+        r = keywrap.lock(force=force)
+    except keywrap.LockError as e:
+        _err(str(e))
+        sys.exit(1)
+    if r.status == "already-locked":
+        _ok(f"already locked ({r.path} is absent)")
+        return
+    _ok(f"locked: removed {r.path} (best-effort zero-fill; not guaranteed on "
+        f"APFS/SSD)")
+    for m in r.methods or []:
+        v = (r.verified or {}).get(m.method_id)
+        _ok(f"  can unlock with {m.method_id}"
+            + (f" (verified {v})" if v else " (not verified)"))
+
+
 @cli.group()
 def key() -> None:
     """Manage SSH keys stored in config/keys/.

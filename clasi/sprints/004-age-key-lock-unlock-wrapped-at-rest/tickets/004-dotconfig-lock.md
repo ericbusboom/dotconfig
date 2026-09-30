@@ -1,7 +1,7 @@
 ---
 id: '004'
 title: dotconfig lock
-status: in-progress
+status: done
 use-cases:
 - SUC-003
 depends-on:
@@ -21,13 +21,13 @@ completes_issue: true
 
 ## Acceptance Criteria
 
-- [ ] Exits 0 with a message if already locked (plain file absent)
-- [ ] Refuses (non-zero) unless at least one wrapped file exists, its method is in the sidecar, and sidecar `public_key` equals the plain key's public key
-- [ ] Refusal message explains what is missing and suggests `dotconfig key wrap`
-- [ ] `--force` deletes anyway after printing what will be unrecoverable
-- [ ] Deletion is best-effort zero-fill then unlink; documented as not guaranteed on APFS/SSD
-- [ ] Never prompts; never reads stdin; no secret printed
-- [ ] Does not require any wrapped file to have a recent `verified:` date beyond being present and recorded (verified flag is reported, not gating) -- planner choice
+- [x] Exits 0 with a message if already locked (plain file absent)
+- [x] Refuses (non-zero) unless at least one wrapped file exists, its method is in the sidecar, and sidecar `public_key` equals the plain key's public key
+- [x] Refusal message explains what is missing and suggests `dotconfig key wrap`
+- [x] `--force` deletes anyway after printing what will be unrecoverable
+- [x] Deletion is best-effort zero-fill then unlink; documented as not guaranteed on APFS/SSD
+- [x] Never prompts; never reads stdin; no secret printed
+- [x] Does not require any wrapped file to have a recent `verified:` date beyond being present and recorded (verified flag is reported, not gating) -- planner choice
 
 ## Testing
 
@@ -35,3 +35,10 @@ completes_issue: true
 - **New tests to write**: Tests in `tests/test_lock.py`: lock succeeds with valid wrapped+sidecar, refuses with no wrapped file, refuses with sidecar missing/mismatched key, `--force`, already locked exit 0, no stdin use.
 - **Constraints**: tests must use a temp `SOPS_AGE_KEY_FILE`, never the real key.
 - **Verification command**: `uv run pytest <scoped tests>`
+
+## Addition (team-lead decision)
+
+`key wrap` now records the plugin identity file path as `identity_file` on
+`se` and `yubikey` sidecar entries (non-secret stubs), so `unlock --with se`
+works without `--identity`. Not recorded for kind `identity` (recovery key;
+stays a `hint`). Test: `tests/test_lock.py::test_wrap_then_unlock_with_se_needs_no_identity`.
