@@ -146,3 +146,47 @@ def test_plain_load_unaffected_when_locked(locked, tmp_path):
     out = tmp_path / ".env"
     load_config("dev", None, cfg, out)
     assert "A=1" in out.read_text()
+
+
+def test_save_config_locked_writes_nothing(locked, tmp_path):
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    env = tmp_path / ".env"
+    env.write_text(
+        "# CONFIG_DEPLOY=dev\n"
+        "# --- public (dev) ---\nA=1\n"
+        "# --- secrets (dev) ---\nTOKEN=xyz\n"
+    )
+    with patch("subprocess.run") as run:
+        try:
+            save_config(env, cfg)
+        except SystemExit as e:
+            assert e.code == 75
+        else:
+            pytest.fail("expected exit 75")
+    run.assert_not_called()
+    assert not (cfg / "dev").exists()
+
+
+def test_save_config_structured_locked_writes_nothing(locked, tmp_path):
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    env = tmp_path / "out.yaml"
+    env.write_text(
+        "_dotconfig:\n  deploy: dev\ndev:\n  public:\n    A: '1'\n  secrets:\n    T: x\n"
+    )
+    with pytest.raises(SystemExit) as e:
+        save_config(env, cfg, fmt="yaml")
+    assert e.value.code == 75
+    assert not (cfg / "dev").exists()
+
+
+def test_save_file_split_locked_writes_nothing(locked, tmp_path):
+    cfg = tmp_path / "config"
+    (cfg / "dev").mkdir(parents=True)
+    src = tmp_path / "app.env"
+    src.write_text("NAME=x\nAPI_SECRET=hunter2hunter2\n")
+    with pytest.raises(SystemExit) as e:
+        save_file("dev", None, "app.env", cfg, source=src)
+    assert e.value.code == 75
+    assert not (cfg / "dev" / "app.env").exists()

@@ -39,6 +39,15 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+_MODULE_SECRET = None
+
+
+@pytest.fixture(autouse=True)
+def _reapply_age_key(sops_env, monkeypatch):
+    """The global conftest unsets SOPS_AGE_KEY per test; re-apply the module key."""
+    monkeypatch.setenv("SOPS_AGE_KEY", _MODULE_SECRET)
+
+
 @pytest.fixture(scope="module")
 def sops_env():
     """Set up a real SOPS environment with an age keypair.
@@ -93,6 +102,8 @@ def sops_env():
     # Set the secret key in the environment so sops can decrypt
     old_key = os.environ.get("SOPS_AGE_KEY")
     os.environ["SOPS_AGE_KEY"] = secret_key
+    global _MODULE_SECRET
+    _MODULE_SECRET = secret_key
 
     yield config_dir
 

@@ -493,6 +493,7 @@ def _write_with_split(
             return
 
         if secret_count > 0:
+            require_unlocked()
             public_data, secrets_data = _split_secrets(data)
             # Write public file with REDACTED placeholders
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -513,6 +514,7 @@ def _write_with_split(
     elif suffix in _ENV_SUFFIXES:
         pub_content, sec_content = _split_env_secrets(data_content)
         if sec_content:
+            require_unlocked()
             # Write public file with REDACTED placeholders
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(pub_content)
@@ -735,6 +737,15 @@ def _save_config_structured(
         public_dict = deploy_data.get("public", {})
         secrets_dict = deploy_data.get("secrets", {})
 
+        # Fail before any write if the key is locked and secrets will be encrypted.
+        _src_local = meta.get("local")
+        _local_secrets = (
+            data[_src_local].get("secrets", {})
+            if _src_local and _src_local in data else {}
+        )
+        if secrets_dict or _local_secrets:
+            require_unlocked()
+
         if public_dict:
             p = config_dir / save_deploy / "public.env"
             env_content = _dict_to_env_lines(public_dict)
@@ -917,6 +928,10 @@ def save_config(
 
     sops_config = config_dir / "sops.yaml"
     saved: list = []
+
+    # Fail before any write if the key is locked and secrets will be encrypted.
+    if any(k.startswith("secrets") and v.strip() for k, v in sections.items()):
+        require_unlocked()
 
     # ---- Deployment sections ----
     if override_deploys:
