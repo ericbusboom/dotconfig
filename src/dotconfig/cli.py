@@ -17,6 +17,9 @@ dotconfig save [-d <deployment>] [-l <local>] [--file <name>]
 dotconfig key <subcommand>
     Manage SSH keys (gen, save, get, pub, list, rm, send).
 
+dotconfig age <subcommand>
+    Manage the age key (status, wrap, unlock, lock).
+
 dotconfig gh-push -d <deployment>
     Push deployment secrets to GitHub Actions / Codespaces.
 
@@ -321,6 +324,14 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
          "-S/--stdout, or to normalize source files that mix prefixed and "
          "plain assignments.",
 )
+@click.option(
+    "--public", "public_only",
+    is_flag=True,
+    default=False,
+    help="Blank every secret value (KEY=). With no names, reloads the "
+         "deployment/local recorded in the current .env. Never decrypts, so "
+         "it works while the age key is locked; 'save' refuses the result.",
+)
 @click.pass_context
 def load(
     ctx: click.Context,
@@ -337,6 +348,7 @@ def load(
     embed_files: Tuple[str, ...],
     no_export: bool,
     add_export: bool,
+    public_only: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -362,6 +374,10 @@ def load(
     Use --split to write public values to the main file and secret
     values to a companion .secret file (e.g. .env + .env.secret).
 
+    Use --public to write every secret key with an empty value, so
+    consumers see all variables but no secrets. Without names it
+    reloads whatever deployment/local the current .env was loaded from.
+
     Example:
 
     \b
@@ -377,6 +393,8 @@ def load(
         dotconfig load -d prod --split
         dotconfig load -d prod -e CERT_FILE        # one *_FILE var
         dotconfig load -d prod -e                  # all *_FILE vars
+        dotconfig load --public                    # current .env, secrets blanked
+        dotconfig load prod --public
     """
     if use_json and use_yaml:
         raise click.UsageError("--json and --yaml are mutually exclusive")
@@ -407,6 +425,12 @@ def load(
                 f"--embed argument must be an UPPERCASE *_FILE variable name, "
                 f"got: {v!r}"
             )
+    if public_only and filename:
+        raise click.UsageError("--public cannot be used with --file")
+    if public_only and embed_files:
+        raise click.UsageError("--public cannot be used with --embed")
+    if public_only and flat:
+        raise click.UsageError("--public cannot be used with --flat")
     if no_export and filename:
         raise click.UsageError("--no-export cannot be used with --file")
     # --no-export with --json/--yaml is a silent no-op: structured output
@@ -451,12 +475,6 @@ def load(
         deploys = [deploy] if deploy else []
         locals_ = [local] if local else []
 
-    if (use_json or use_yaml) and (len(deploys) > 1 or len(locals_) > 1):
-        raise click.UsageError(
-            "--json/--yaml only support a single deployment and a single local "
-            "in this release (multi-layer stacks coming in a future sprint)"
-        )
-
     fmt = "json" if use_json else ("yaml" if use_yaml else "env")
 
     # Resolve -o flag: None = config/files/ (default), "." = CWD, else explicit path
@@ -471,6 +489,31 @@ def load(
         out = Path(output)
     else:
         out = None
+
+    # --public with no deployment: reload the layers recorded in the current .env
+    if public_only and not deploys:
+        from .save import _parse_env_layers
+
+        current = out if (out and fmt == "env") else Path(".env")
+        if not current.exists():
+            raise click.UsageError(
+                f"--public with no deployment reloads the current .env, but "
+                f"{current} does not exist; pass a deployment name"
+            )
+        env_deploys, env_locals, _ = _parse_env_layers(current.read_text())
+        if not env_deploys:
+            raise click.UsageError(
+                f"no CONFIG_DEPLOY header in {current}; pass a deployment name"
+            )
+        deploys = env_deploys
+        if not locals_:
+            locals_ = env_locals
+
+    if (use_json or use_yaml) and (len(deploys) > 1 or len(locals_) > 1):
+        raise click.UsageError(
+            "--json/--yaml only support a single deployment and a single local "
+            "in this release (multi-layer stacks coming in a future sprint)"
+        )
 
     if filename:
         if fmt != "env":
@@ -502,7 +545,11 @@ def load(
             embed_files=embed_files,
             no_export=no_export,
             add_export=add_export,
+            public_only=public_only,
         )
+        if public_only and not to_stdout:
+            from .output import ok as _ok
+            _ok("Secret values blanked (--public); 'dotconfig save' will refuse this file")
 
     hook_args = [str(cfg.resolve())]
     if deploys:
@@ -714,6 +761,121 @@ def save(
 
 
 @cli.group()
+def age() -> None:
+    """Manage the age encryption key (status, wrap, unlock, lock).
+
+    \b
+        dotconfig age status
+        dotconfig age wrap --passphrase
+        dotconfig age unlock
+        dotconfig age lock
+    """
+
+
+@age.command("status")
+def age_status() -> None:
+    """Show the age key, its lock state, wrap methods and warnings.
+
+    \b
+        dotconfig age status
+    """
+    from .keys import show_keys
+
+    show_keys()
+
+
+@age.command("unlock")
+@click.option("--with", "with_method", default=None,
+              help="Method to use (se, yubikey, pass, or a wrapped label).")
+@click.option("--identity", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Age identity file that opens a wrapped key (e.g. on a USB drive).")
+@click.option("--paste", is_flag=True,
+              help="Type/paste AGE-SECRET-KEY-1... at a hidden prompt (TTY only).")
+def unlock_cmd(with_method, identity, paste) -> None:
+    """Restore the plain age key for this session.
+
+    Requires a human: Touch ID / YubiKey touch / passphrase prompt, an
+    identity file, or a pasted key. Default order: Secure Enclave (GUI
+    session), YubiKey (device present), passphrase. The recovered key's
+    public key must match the sidecar; the key is written only to
+    $SOPS_AGE_KEY_FILE (mode 0600).
+
+    \b
+        dotconfig age unlock
+        dotconfig age unlock --with pass
+        dotconfig age unlock --identity /Volumes/USB/recovery.txt
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok
+
+    try:
+        r = keywrap.unlock(with_method, Path(identity) if identity else None, paste)
+    except (keywrap.UnlockError, keywrap.WrapError) as e:
+        _err(str(e))
+        sys.exit(1)
+    if r.status == "already-unlocked":
+        _ok(f"already unlocked ({r.path})")
+    else:
+        _ok(f"unlocked via {r.method}: {r.path}")
+
+
+@age.command("lock")
+@click.option("--force", is_flag=True,
+              help="Delete the plain key even if no verified wrapped copy exists.")
+def lock_cmd(force) -> None:
+    """Remove the plain age key file, only when that is safe.
+
+    Needs no secret, asks no questions, never reads stdin: safe to run
+    unattended. Exits 0 if already locked. Refuses unless a wrapped file
+    exists, is recorded in the sidecar, and the sidecar's public key matches
+    the plain key. Deletion is a best-effort zero-fill then unlink; this is
+    not guaranteed to erase data on APFS or SSDs.
+
+    \b
+        dotconfig age lock
+        dotconfig age lock --force
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok, warn as _warn
+
+    if force:
+        # Report what is at stake before deleting anything.
+        try:
+            methods, _ = keywrap.list_wrapped()
+            kp = keywrap.keystore.key_path()
+            if kp.exists():
+                secret = keywrap.extract_secret(kp.read_text())
+                pub = keywrap.keystore.public_key_of(secret) if secret else None
+                problems = keywrap.lock_problems(pub)
+                if problems:
+                    _warn("--force: deleting " + str(kp) + " although: "
+                          + "; ".join(problems)
+                          + ". The key will be UNRECOVERABLE unless you have "
+                          "another copy.")
+        except Exception:
+            _warn("--force: deleting the key without safety checks; it may be "
+                  "unrecoverable.")
+    try:
+        r = keywrap.lock(force=force)
+    except keywrap.LockError as e:
+        _err(str(e))
+        sys.exit(1)
+    if r.status == "already-locked":
+        _ok(f"already locked ({r.path} is absent)")
+        return
+    _ok(f"locked: removed {r.path} (best-effort zero-fill; not guaranteed on "
+        f"APFS/SSD)")
+    for m in r.methods or []:
+        v = (r.verified or {}).get(m.method_id)
+        _ok(f"  can unlock with {m.method_id}"
+            + (f" (verified {v})" if v else " (not verified)"))
+
+
+@cli.group()
 def key() -> None:
     """Manage SSH keys stored in config/keys/.
 
@@ -725,6 +887,70 @@ def key() -> None:
         dotconfig key list
         dotconfig key send myhost
     """
+
+
+@age.command("wrap")
+@click.option("--se", "se", is_flag=True, help="Wrap for the Secure Enclave plugin.")
+@click.option("--se-recipient", default=None,
+              help="age1se1... recipient (default: from sidecar).")
+@click.option("--se-identity", type=click.Path(exists=True), default=None,
+              help="Plugin identity file used to verify the --se round trip.")
+@click.option("--yubikey", "yubikey", is_flag=True, help="Wrap for a YubiKey.")
+@click.option("--yubikey-recipient", default=None,
+              help="age1yubikey1... recipient (default: from sidecar).")
+@click.option("--yubikey-identity", type=click.Path(exists=True), default=None,
+              help="Plugin identity file used to verify the --yubikey round trip.")
+@click.option("--passphrase", "passphrase", is_flag=True,
+              help="Wrap with a passphrase (age prompts on the terminal).")
+@click.option("--recipient", default=None,
+              help="Wrap to this age recipient (needs --label and --identity).")
+@click.option("--label", default=None,
+              help="Label for --recipient (also names the file).")
+@click.option("--identity", type=click.Path(exists=True), default=None,
+              help="Identity file used to verify the --recipient round trip.")
+@click.option("--hint", default=None,
+              help="Free-text hint (e.g. where the identity lives).")
+def age_wrap(se, se_recipient, se_identity, yubikey, yubikey_recipient,
+             yubikey_identity, passphrase, recipient, label, identity, hint) -> None:
+    """Wrap the age key at rest and verify each wrapped copy opens.
+
+    Writes <keyfile>.<method>.age per method and updates the sidecar. Each new
+    file is proven by a human-present round trip before it is recorded; a
+    file that fails is deleted. The plain key is never modified.
+
+    \b
+        dotconfig age wrap --passphrase
+        dotconfig age wrap --recipient age1... --label recovery --identity id.txt
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok
+
+    try:
+        specs = keywrap.build_specs(
+            se=se, yubikey=yubikey, passphrase=passphrase,
+            recipient=recipient, label=label,
+            identity=Path(identity) if identity else None,
+            se_recipient=se_recipient,
+            se_identity=Path(se_identity) if se_identity else None,
+            yubikey_recipient=yubikey_recipient,
+            yubikey_identity=Path(yubikey_identity) if yubikey_identity else None,
+            hint=hint,
+        )
+        results = keywrap.wrap(specs)
+    except keywrap.WrapError as e:
+        _err(str(e))
+        sys.exit(1)
+    failed = False
+    for r in results:
+        if r.ok:
+            _ok(f"{r.method_id}: wrote and verified {r.path}")
+        else:
+            failed = True
+            _err(f"{r.method_id}: {r.error} (file removed)")
+    if failed:
+        sys.exit(1)
 
 
 @key.command("gen")

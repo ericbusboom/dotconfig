@@ -25,6 +25,7 @@ overrides — and can round-trip it back.  It is designed for teams where:
   - [`dotconfig load`](#dotconfig-load)
   - [`dotconfig save`](#dotconfig-save)
 - [SOPS integration](#sops-integration)
+- [Locking the age key](#locking-the-age-key-lock--unlock)
 - [Workflow](#workflow)
 - [Adding a new deployment](#adding-a-new-deployment)
 - [Adding a new developer](#adding-a-new-developer)
@@ -239,7 +240,22 @@ dotconfig load -d prod -S | jq .
 
 # Keep the export prefix on stdout when you really want to source it
 dotconfig load -d prod -S --add-export
+
+# Same layers as the current .env, but every secret value blanked
+dotconfig load --public
+dotconfig load prod --public
 ```
+
+When using `--public`, every secret key is written with an empty value
+(`KEY=`), so tools that read the `.env` see every variable but no
+secret. With no deployment name it reloads the deployment and locals
+recorded in the current `.env` header, so `dotconfig load prod` followed
+by `dotconfig load --public` swaps the decrypted file for a blanked one.
+Key names are read from the encrypted files without decrypting them, so
+it works while the age key is locked. The output is marked
+(`# CONFIG_PUBLIC=true`, or `_dotconfig.public` in JSON/YAML) and
+`dotconfig save` refuses it, so the blanks can't overwrite real secrets.
+Incompatible with `--file`, `--embed` and `--flat`.
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
 lives in one location only.
@@ -366,8 +382,15 @@ is printed.
 **Key discovery** follows the standard sops precedence:
 
 1. `SOPS_AGE_KEY_FILE` environment variable (path to an age private key file)
-2. `SOPS_AGE_KEY` environment variable (inline age private key)
-3. `sops.yaml` specified via `--config` flag or `SOPS_CONFIG` environment variable
+2. `sops.yaml` specified via `--config` flag or `SOPS_CONFIG` environment variable
+
+**Use `SOPS_AGE_KEY_FILE`, not `SOPS_AGE_KEY`.**  sops also accepts the
+secret inline in `SOPS_AGE_KEY`, but dotconfig discourages it: the secret
+then lives in the process environment (inherited by every child process,
+visible in shell history and CI logs) and it survives `dotconfig age lock`, so
+[locking the key](#locking-the-age-key-lock--unlock) no longer protects
+anything.  `dotconfig age status` warns when `SOPS_AGE_KEY` is set, and the
+locked-key guard treats the key as unlocked while it is set.
 
 If `SOPS_AGE_KEY_FILE` is defined inside `.env` itself (e.g. in the
 public-local section), `dotconfig save` reads it from the file before
@@ -399,6 +422,120 @@ SOPS_CONFIG=config/sops.yaml sops --encrypt --in-place config/dev/secrets.env
 # or
 sops --config config/sops.yaml --encrypt --in-place config/dev/secrets.env
 ```
+
+---
+
+## Locking the age key (lock / unlock)
+
+The age private key normally sits in plaintext at `$SOPS_AGE_KEY_FILE`
+(default `~/.config/sops/age/keys.txt`).  `dotconfig` can keep it *wrapped at
+rest*: encrypted copies live next to it, and the plain file is deleted
+(`lock`) and restored only when a human proves presence (`unlock`).
+
+Files, all next to the key file (`keys.txt` below):
+
+| File | Contents |
+|---|---|
+| `keys.txt` | the plain key (present only while unlocked) |
+| `keys.txt.<method>.age` | wrapped copy of the key, one per method |
+| `keys.txt.lock.yaml` | sidecar: public key, methods, verified dates (no secrets) |
+| `keys.txt.<method>.pending.age` | temporary file during `age wrap`; removed on failure |
+
+Method ids: `se` (Secure Enclave), `yubikey`, `pass` (passphrase), or the
+slugified `--label` of an extra recipient (e.g. label `Recovery USB` becomes
+`recovery-usb`).  `se`, `yubikey`, `pass` are reserved.
+
+### Setup: `dotconfig age wrap`
+
+Run while the key is unlocked.  Each wrapped file is written under a
+`*.pending.age` name, opened again (a human-present round trip) and only
+renamed into place, and recorded in the sidecar, if the recovered key's public
+key matches.  A file that fails is deleted; the plain key is never modified.
+
+```bash
+# passphrase (age prompts on the terminal)
+dotconfig age wrap --passphrase
+
+# Secure Enclave (age-plugin-se).  The identity file is a non-secret stub that
+# the plugin created; it is needed to verify the round trip and is recorded in
+# the sidecar so `unlock` can find it.
+dotconfig age wrap --se --se-recipient age1se1... --se-identity ~/se-identity.txt
+
+# YubiKey (age-plugin-yubikey), same shape
+dotconfig age wrap --yubikey --yubikey-recipient age1yubikey1... \
+    --yubikey-identity ~/yubikey-identity.txt
+
+# Extra recovery recipient (e.g. an identity on a USB drive).  The identity is
+# used only to verify; the path is NOT recorded, --hint is advisory text.
+dotconfig age wrap --recipient age1... --label "Recovery USB" \
+    --identity /Volumes/USB/recovery.txt --hint "USB in the safe"
+```
+
+`--se-recipient` / `--yubikey-recipient` may be omitted when the sidecar
+already records one.  `dotconfig age status` shows the lock state (`locked`,
+`unlocked` or `not wrapped`) and each method's last verified date.
+
+### Daily use
+
+```bash
+dotconfig age unlock                  # restore the key for this session
+dotconfig load -d dev -l alice    # ... work ...
+dotconfig age lock                    # delete the plain key again
+```
+
+`unlock [--with METHOD] [--identity FILE] [--paste]`:
+
+- default order: Secure Enclave (GUI session only), YubiKey (device present),
+  passphrase; `--with se|yubikey|pass|<label>` picks one method
+- `--identity FILE` opens a wrapped file with an age identity (e.g. on a USB
+  drive), `--paste` reads `AGE-SECRET-KEY-1...` from a hidden prompt (real TTY
+  only; the key is never read from a pipe, flag or environment variable)
+- the recovered key's public key must match the sidecar, and it is written
+  only to `$SOPS_AGE_KEY_FILE` with mode 0600; if already unlocked it says so
+
+`lock [--force]` needs no secret and never prompts or reads stdin, so it is
+**safe to run unattended** (cron, git hooks, login/logout scripts).  It
+refuses, leaving the key in place, unless a verified wrapped copy for the same
+public key is recorded; `--force` deletes regardless.  Lock zero-fills the
+file and then unlinks it, but that is **best effort only**: on APFS and SSDs
+(copy-on-write, wear levelling) old blocks may survive, so treat it as raising
+the bar, not as secure erase.  A launchd screen-lock hook that runs
+`dotconfig age lock` is a possible follow-up and is not provided yet.
+
+### When the key is locked: exit code 75
+
+`load`, `save`, `key get/load/pub` and `reencrypt` check the lock first and,
+before running sops, fail with `age key is locked — run: dotconfig age unlock`
+and **exit code 75** (distinct from the ordinary failure code 1).  In an
+interactive terminal they offer to unlock inline; in scripts and agents they
+just exit 75.
+
+### Manual recovery with `age -d`
+
+The wrapped files are ordinary age files.  If dotconfig, or the sidecar, is
+lost you can still recover the key with `age` alone (install the matching
+plugin for `se` / `yubikey`):
+
+```bash
+# passphrase (keys.txt.pass.age)
+age -d keys.txt.pass.age > keys.txt
+
+# Secure Enclave (keys.txt.se.age): age-plugin-se must be on PATH
+age -d -i se-identity.txt keys.txt.se.age > keys.txt
+
+# YubiKey (keys.txt.yubikey.age): age-plugin-yubikey must be on PATH;
+# the identity file comes from `age-plugin-yubikey --identity > yubikey-identity.txt`
+age -d -i yubikey-identity.txt keys.txt.yubikey.age > keys.txt
+
+# extra recipient / identity (keys.txt.<label>.age)
+age -d -i /Volumes/USB/recovery.txt keys.txt.recovery-usb.age > keys.txt
+
+chmod 600 keys.txt
+```
+
+Keep at least one method whose secret does not depend on this machine (the
+passphrase, or a recovery identity on removable media).  A Secure Enclave key
+cannot leave the device it was created on.
 
 ---
 

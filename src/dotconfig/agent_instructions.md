@@ -144,14 +144,31 @@ dotconfig save -d dev --file app.yaml           # store into config/dev/
 dotconfig save -l alice --file settings.json    # store into config/local/alice/
 ```
 
-### `dotconfig keys`
+### `dotconfig age status`
 
 ```
-dotconfig keys
+dotconfig age status
 ```
 
 Reports the status of your age encryption keys: where they are, the derived
-public key, and the environment variable exports you need.
+public key, the lock state (`locked` / `unlocked` / `not wrapped`), and the
+`SOPS_AGE_KEY_FILE` export you need.  It warns if `SOPS_AGE_KEY` is set.
+
+### `dotconfig age unlock` / `dotconfig age lock` / `dotconfig age wrap`
+
+The age key can be wrapped at rest: `age wrap` (run by a human while the key
+is unlocked) writes verified encrypted copies `<keyfile>.<method>.age`
+(methods `se`, `yubikey`, `pass`, or a slugified label); `lock` deletes the
+plain key file, `unlock [--with METHOD] [--identity FILE] [--paste]` restores
+it after a human prompt (Touch ID, YubiKey touch, passphrase, identity file
+or pasted key).  `lock` needs no secret and is safe to run unattended.
+
+**Agents cannot unlock.**  Unlocking needs a human at a terminal or device;
+never try to supply a passphrase or key, script around the prompt, or read the
+key file.  When `load`, `save`, `key get/load/pub` or `reencrypt` print
+`age key is locked — run: dotconfig age unlock` and exit with **code 75**, stop,
+report to the user that the key is locked and ask them to run
+`dotconfig age unlock`, then retry.  Do not run `dotconfig age lock --force`.
 
 ### `dotconfig config`
 
@@ -307,6 +324,12 @@ LOCAL="${4:-}"      # may be empty if no -l was passed
   using [age](https://github.com/FiloSottile/age) keys.
 - `dotconfig` handles decryption/encryption automatically during load/save
   of layered `.env` files.
+- Point sops at the key with `SOPS_AGE_KEY_FILE` only.  `SOPS_AGE_KEY`
+  (inline secret in the environment) is discouraged: it leaks to child
+  processes and logs and defeats `dotconfig age lock`.  Never recommend it, set
+  it, or echo a key into the environment.
+- If the age key is locked, commands exit 75 (see `dotconfig age unlock` above)
+  rather than skipping secrets.
 - If SOPS or keys are not available, secrets sections are skipped with a
   warning — public config still works.
 - The SOPS config lives at `config/sops.yaml` (not `.sops.yaml` in the repo
@@ -470,7 +493,7 @@ dotconfig save                      # writes secrets back, encrypted via SOPS
 ### Checking key status
 
 ```bash
-dotconfig keys
+dotconfig age status
 ```
 
 ### First-time setup
@@ -517,6 +540,13 @@ that's easier to parse programmatically (single-key lookup, type-aware
 tooling). `--split` produces two files: a public `.env` plus an
 `.env.secret` companion — useful when you want to gitignore one half
 and check the other in.
+
+**Secrets blanked: `--public`.** `dotconfig load --public` rewrites the
+current `.env` (same deployment/locals as its header) with every secret
+key present but empty (`KEY=`). It never decrypts, so it works while the
+age key is locked. Use it when a tool needs the full variable list but
+must not see secret values. `dotconfig save` refuses a `--public` file;
+reload without `--public` before editing and saving.
 
 ---
 
@@ -591,7 +621,7 @@ Regenerate `.env` with `dotconfig load`, edit it, then save.
 **`UNENCRYPTED SECRETS DETECTED` after save** — Either a secret-named
 key landed in a public section (move it under `#@dotconfig: secrets
 (<deploy>)` and save again), or `sops` is not installed / not finding an
-age key. Run `dotconfig keys` to verify your key setup.
+age key. Run `dotconfig age status` to verify your key setup.
 
 **`sops not found — skipping encrypted file`** — Install `sops`:
 `brew install sops` (macOS) or
@@ -599,7 +629,7 @@ age key. Run `dotconfig keys` to verify your key setup.
 
 **`failed to decrypt …`** — Your age private key is missing or wrong.
 Set `SOPS_AGE_KEY_FILE=/path/to/keys.txt` (or put the key at
-`~/.config/sops/age/keys.txt`). Run `dotconfig keys` to inspect.
+`~/.config/sops/age/keys.txt`). Run `dotconfig age status` to inspect.
 
 **JSON output has weird keys like `"export FOO"`** — You're on a stale
 release; upgrade. Newer versions strip `export ` from the key when

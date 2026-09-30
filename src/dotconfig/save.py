@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from .audit import _key_looks_secret
-from .load import _add_export_prefix, _env_lines_to_dict
+from .load import PUBLIC_MARKER, _add_export_prefix, _env_lines_to_dict
+from .keyguard import require_unlocked
 from .output import error, heading, info, ok, warn
 
 
@@ -293,6 +294,7 @@ def _encrypt_sops(
     If the creation rules don't match the filename, falls back to
     passing the age recipient key directly via ``--age``.
     """
+    require_unlocked()
     try:
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
@@ -491,6 +493,7 @@ def _write_with_split(
             return
 
         if secret_count > 0:
+            require_unlocked()
             public_data, secrets_data = _split_secrets(data)
             # Write public file with REDACTED placeholders
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -511,6 +514,7 @@ def _write_with_split(
     elif suffix in _ENV_SUFFIXES:
         pub_content, sec_content = _split_env_secrets(data_content)
         if sec_content:
+            require_unlocked()
             # Write public file with REDACTED placeholders
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(pub_content)
@@ -622,6 +626,15 @@ def _dict_to_env_lines(data: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _refuse_public_load(source: Path) -> None:
+    """Exit if *source* came from ``load --public`` (its secrets are blanks)."""
+    error(
+        f"{source} was loaded with --public, so its secret values are blank; "
+        "saving it would erase your secrets. Reload without --public, then save."
+    )
+    sys.exit(1)
+
+
 def _save_config_structured(
     env_file: Path,
     config_dir: Path,
@@ -641,6 +654,10 @@ def _save_config_structured(
         data = json.loads(content)
     else:
         data = yaml.safe_load(content) or {}
+
+    if isinstance(data, dict) and isinstance(data.get("_dotconfig"), dict) \
+            and data["_dotconfig"].get("public"):
+        _refuse_public_load(env_file)
 
     sops_config = config_dir / "sops.yaml"
     saved: List[Tuple[str, str]] = []
@@ -732,6 +749,15 @@ def _save_config_structured(
         deploy_data = data.get(meta.get("deploy", deployment), {})
         public_dict = deploy_data.get("public", {})
         secrets_dict = deploy_data.get("secrets", {})
+
+        # Fail before any write if the key is locked and secrets will be encrypted.
+        _src_local = meta.get("local")
+        _local_secrets = (
+            data[_src_local].get("secrets", {})
+            if _src_local and _src_local in data else {}
+        )
+        if secrets_dict or _local_secrets:
+            require_unlocked()
 
         if public_dict:
             p = config_dir / save_deploy / "public.env"
@@ -887,6 +913,9 @@ def save_config(
 
     content = env_file.read_text()
 
+    if PUBLIC_MARKER in content.splitlines():
+        _refuse_public_load(env_file)
+
     # Extract SOPS key path from the file itself before any section parsing
     # so that sops can be invoked correctly when the variable is stored there.
     for line in content.splitlines():
@@ -915,6 +944,10 @@ def save_config(
 
     sops_config = config_dir / "sops.yaml"
     saved: list = []
+
+    # Fail before any write if the key is locked and secrets will be encrypted.
+    if any(k.startswith("secrets") and v.strip() for k, v in sections.items()):
+        require_unlocked()
 
     # ---- Deployment sections ----
     if override_deploys:

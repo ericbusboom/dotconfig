@@ -15,6 +15,7 @@ from typing import Optional
 
 from .discover import find_config_dir
 from .load import _decrypt_sops, _is_sops_encrypted
+from .keyguard import require_unlocked
 from .output import created, error, heading, info, item, ok, warn
 from .save import _encrypt_sops
 
@@ -167,6 +168,7 @@ def save_key(
 def _decrypt_priv(priv: Path, sops_cfg: Optional[Path]) -> str:
     """Return the decrypted contents of a (possibly SOPS-encrypted) key file."""
     if _is_sops_encrypted(priv):
+        require_unlocked()
         content = _decrypt_sops(priv, sops_cfg)
         if content is None:
             error(f"failed to decrypt {priv}")
@@ -266,6 +268,7 @@ def pub_key(name: str, config_dir: Optional[Path] = None) -> None:
 
     # Derive from private key via ssh-keygen -y
     if _is_sops_encrypted(priv):
+        require_unlocked()
         content = _decrypt_sops(priv, sops_cfg)
         if content is None:
             error(f"failed to decrypt {priv}")
