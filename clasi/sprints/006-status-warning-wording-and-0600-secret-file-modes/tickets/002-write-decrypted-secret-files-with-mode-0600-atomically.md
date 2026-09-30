@@ -1,8 +1,9 @@
 ---
 id: '002'
 title: Write decrypted secret files with mode 0600 atomically
-status: open
-use-cases: [SUC-002]
+status: in-progress
+use-cases:
+- SUC-002
 depends-on: []
 github-issue: ''
 issue: env-file-mode-0600.md

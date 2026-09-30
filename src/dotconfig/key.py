@@ -16,6 +16,7 @@ from typing import Optional
 from .discover import find_config_dir
 from .load import _decrypt_sops, _is_sops_encrypted
 from .keyguard import require_unlocked
+from .keystore import atomic_write
 from .output import created, error, heading, info, item, ok, warn
 from .save import _encrypt_sops
 
@@ -183,8 +184,7 @@ def _write_keypair(priv: Path, content: str, dest: Path) -> None:
         error(f"refusing to overwrite existing file: {dest}")
         sys.exit(1)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(content)
-    os.chmod(dest, 0o600)
+    atomic_write(dest, content.encode(), 0o600)
     created(f"{dest} (0600)")
 
     pub_src = Path(str(priv) + ".pub")

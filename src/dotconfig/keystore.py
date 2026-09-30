@@ -68,7 +68,7 @@ def sidecar_path() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _atomic_write(path: Path, data: bytes, mode: int) -> None:
+def atomic_write(path: Path, data: bytes, mode: int) -> None:
     """Write ``data`` to ``path`` via a same-directory temp file + replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -93,6 +93,10 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
         except FileNotFoundError:
             pass
         raise
+
+
+# Backwards-compatible private alias.
+_atomic_write = atomic_write
 
 
 def check_dir_permissions(directory: Path) -> bool:
