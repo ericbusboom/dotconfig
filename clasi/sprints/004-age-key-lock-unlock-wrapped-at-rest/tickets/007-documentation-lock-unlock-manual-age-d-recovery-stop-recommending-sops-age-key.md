@@ -1,9 +1,15 @@
 ---
 id: '007'
 title: 'Documentation: lock/unlock, manual age -d recovery, stop recommending SOPS_AGE_KEY'
-status: open
-use-cases: ["SUC-005", "SUC-004"]
-depends-on: ["003", "004", "005", "006"]
+status: done
+use-cases:
+- SUC-005
+- SUC-004
+depends-on:
+- '003'
+- '004'
+- '005'
+- '006'
 github-issue: ''
 issue: age-key-lock-unlock.md
 completes_issue: true
@@ -18,11 +24,11 @@ Document the feature in README.md and `src/dotconfig/agent_instructions.md`: set
 
 ## Acceptance Criteria
 
-- [ ] README has a lock/unlock section with setup, daily use and recovery commands per method (se, yubikey, identity, passphrase)
-- [ ] README and agent_instructions state `SOPS_AGE_KEY` is discouraged and why
-- [ ] Exit code 75 and 'safe to run unattended' for lock are documented; launchd screen-lock hook noted as a possible follow-up
-- [ ] Agent instructions note agents cannot unlock and should report exit 75
-- [ ] `dotconfig --instructions` output still renders (existing test passes)
+- [x] README has a lock/unlock section with setup, daily use and recovery commands per method (se, yubikey, identity, passphrase)
+- [x] README and agent_instructions state `SOPS_AGE_KEY` is discouraged and why
+- [x] Exit code 75 and 'safe to run unattended' for lock are documented; launchd screen-lock hook noted as a possible follow-up
+- [x] Agent instructions note agents cannot unlock and should report exit 75
+- [x] `dotconfig --instructions` output still renders (existing test passes)
 
 ## Testing
 

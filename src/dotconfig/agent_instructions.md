@@ -151,7 +151,24 @@ dotconfig keys
 ```
 
 Reports the status of your age encryption keys: where they are, the derived
-public key, and the environment variable exports you need.
+public key, the lock state (`locked` / `unlocked` / `not wrapped`), and the
+`SOPS_AGE_KEY_FILE` export you need.  It warns if `SOPS_AGE_KEY` is set.
+
+### `dotconfig unlock` / `dotconfig lock` / `dotconfig key wrap`
+
+The age key can be wrapped at rest: `key wrap` (run by a human while the key
+is unlocked) writes verified encrypted copies `<keyfile>.<method>.age`
+(methods `se`, `yubikey`, `pass`, or a slugified label); `lock` deletes the
+plain key file, `unlock [--with METHOD] [--identity FILE] [--paste]` restores
+it after a human prompt (Touch ID, YubiKey touch, passphrase, identity file
+or pasted key).  `lock` needs no secret and is safe to run unattended.
+
+**Agents cannot unlock.**  Unlocking needs a human at a terminal or device;
+never try to supply a passphrase or key, script around the prompt, or read the
+key file.  When `load`, `save`, `key get/load/pub` or `reencrypt` print
+`age key is locked — run: dotconfig unlock` and exit with **code 75**, stop,
+report to the user that the key is locked and ask them to run
+`dotconfig unlock`, then retry.  Do not run `dotconfig lock --force`.
 
 ### `dotconfig config`
 
@@ -307,6 +324,12 @@ LOCAL="${4:-}"      # may be empty if no -l was passed
   using [age](https://github.com/FiloSottile/age) keys.
 - `dotconfig` handles decryption/encryption automatically during load/save
   of layered `.env` files.
+- Point sops at the key with `SOPS_AGE_KEY_FILE` only.  `SOPS_AGE_KEY`
+  (inline secret in the environment) is discouraged: it leaks to child
+  processes and logs and defeats `dotconfig lock`.  Never recommend it, set
+  it, or echo a key into the environment.
+- If the age key is locked, commands exit 75 (see `dotconfig unlock` above)
+  rather than skipping secrets.
 - If SOPS or keys are not available, secrets sections are skipped with a
   warning — public config still works.
 - The SOPS config lives at `config/sops.yaml` (not `.sops.yaml` in the repo
