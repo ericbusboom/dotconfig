@@ -1,9 +1,11 @@
 ---
 id: '002'
 title: dotconfig key wrap with round-trip verification
-status: open
-use-cases: ["SUC-001"]
-depends-on: ["001"]
+status: done
+use-cases:
+- SUC-001
+depends-on:
+- '001'
 github-issue: ''
 issue: age-key-lock-unlock.md
 completes_issue: true
@@ -18,13 +20,13 @@ completes_issue: true
 
 ## Acceptance Criteria
 
-- [ ] Writes one file per requested method and a sidecar entry with kind/recipient/label
-- [ ] Round trip is performed for each new file; result's public key must equal `public_key`; on success `verified:` is set to today's date
-- [ ] A failing file is deleted and reported, exit non-zero; other methods are unaffected
-- [ ] An existing wrapped file is only replaced after the replacement is written to a temp name and verified (never replace a working file with an unverified one)
-- [ ] Refuses if the plain key is missing (suggests unlock) or sidecar `public_key` differs from the plain key
-- [ ] Missing plugin reports the install command; plain key is never modified
-- [ ] Identity round trip uses `--identity FILE` for kind `identity`
+- [x] Writes one file per requested method and a sidecar entry with kind/recipient/label
+- [x] Round trip is performed for each new file; result's public key must equal `public_key`; on success `verified:` is set to today's date
+- [x] A failing file is deleted and reported, exit non-zero; other methods are unaffected
+- [x] An existing wrapped file is only replaced after the replacement is written to a temp name and verified (never replace a working file with an unverified one)
+- [x] Refuses if the plain key is missing (suggests unlock) or sidecar `public_key` differs from the plain key
+- [x] Missing plugin reports the install command; plain key is never modified
+- [x] Identity round trip uses `--identity FILE` for kind `identity`
 
 ## Testing
 

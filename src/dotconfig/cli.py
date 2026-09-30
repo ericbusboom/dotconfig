@@ -727,6 +727,70 @@ def key() -> None:
     """
 
 
+@key.command("wrap")
+@click.option("--se", "se", is_flag=True, help="Wrap for the Secure Enclave plugin.")
+@click.option("--se-recipient", default=None,
+              help="age1se1... recipient (default: from sidecar).")
+@click.option("--se-identity", type=click.Path(exists=True), default=None,
+              help="Plugin identity file used to verify the --se round trip.")
+@click.option("--yubikey", "yubikey", is_flag=True, help="Wrap for a YubiKey.")
+@click.option("--yubikey-recipient", default=None,
+              help="age1yubikey1... recipient (default: from sidecar).")
+@click.option("--yubikey-identity", type=click.Path(exists=True), default=None,
+              help="Plugin identity file used to verify the --yubikey round trip.")
+@click.option("--passphrase", "passphrase", is_flag=True,
+              help="Wrap with a passphrase (age prompts on the terminal).")
+@click.option("--recipient", default=None,
+              help="Wrap to this age recipient (needs --label and --identity).")
+@click.option("--label", default=None,
+              help="Label for --recipient (also names the file).")
+@click.option("--identity", type=click.Path(exists=True), default=None,
+              help="Identity file used to verify the --recipient round trip.")
+@click.option("--hint", default=None,
+              help="Free-text hint (e.g. where the identity lives).")
+def key_wrap(se, se_recipient, se_identity, yubikey, yubikey_recipient,
+             yubikey_identity, passphrase, recipient, label, identity, hint) -> None:
+    """Wrap the age key at rest and verify each wrapped copy opens.
+
+    Writes <keyfile>.<method>.age per method and updates the sidecar. Each new
+    file is proven by a human-present round trip before it is recorded; a
+    file that fails is deleted. The plain key is never modified.
+
+    \b
+        dotconfig key wrap --passphrase
+        dotconfig key wrap --recipient age1... --label recovery --identity id.txt
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok
+
+    try:
+        specs = keywrap.build_specs(
+            se=se, yubikey=yubikey, passphrase=passphrase,
+            recipient=recipient, label=label,
+            identity=Path(identity) if identity else None,
+            se_recipient=se_recipient,
+            se_identity=Path(se_identity) if se_identity else None,
+            yubikey_recipient=yubikey_recipient,
+            yubikey_identity=Path(yubikey_identity) if yubikey_identity else None,
+            hint=hint,
+        )
+        results = keywrap.wrap(specs)
+    except keywrap.WrapError as e:
+        _err(str(e))
+        sys.exit(1)
+    failed = False
+    for r in results:
+        if r.ok:
+            _ok(f"{r.method_id}: wrote and verified {r.path}")
+        else:
+            failed = True
+            _err(f"{r.method_id}: {r.error} (file removed)")
+    if failed:
+        sys.exit(1)
+
+
 @key.command("gen")
 @click.argument("name")
 @click.option("--type", "key_type", default="ed25519", show_default=True,
