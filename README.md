@@ -126,7 +126,7 @@ and at each level uses `config/` if it holds dotconfig files (`sops.yaml`,
 `dotconfig.yaml`, `keys/`, `local/`, or a deployment directory with
 `public.env`/`secrets.env`). If `config/` is missing, or exists but holds
 none of those (say, a JavaScript project's own `config/`), it uses
-`.config/` when that does. If neither qualifies it falls back to
+`.dotconfig/` when that does. If neither qualifies it falls back to
 `./config`. `DOTCONFIG_NAME=<name>` searches for that one name instead,
 with no fallback.
 

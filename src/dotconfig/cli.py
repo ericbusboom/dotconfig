@@ -154,7 +154,7 @@ def _config_dir(ctx: click.Context) -> Path:
     """Config dir for a command: -c/DOTCONFIG_DIR, then discovery, then ./config.
 
     Discovery walks up to the git root and falls back from ``config/`` to
-    ``.config/`` (see :func:`dotconfig.discover.find_config_dir`).
+    ``.dotconfig/`` (see :func:`dotconfig.discover.find_config_dir`).
     """
     from .discover import find_config_dir
 

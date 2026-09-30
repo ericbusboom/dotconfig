@@ -146,7 +146,7 @@ class TestFindConfigDir:
 
 
 # ---------------------------------------------------------------------------
-# .config fallback
+# .dotconfig fallback
 # ---------------------------------------------------------------------------
 
 
@@ -186,54 +186,54 @@ class TestLooksLikeConfigDir:
         assert looks_like_config_dir(tmp_path)
 
 
-class TestDotConfigFallback:
+class TestDotconfigFallback:
     @pytest.fixture(autouse=True)
     def _repo(self, tmp_path, monkeypatch):
         monkeypatch.delenv(ENV_VAR, raising=False)
         (tmp_path / ".git").mkdir()
 
     def test_fallback_name(self):
-        assert FALLBACK_NAME == ".config"
+        assert FALLBACK_NAME == ".dotconfig"
 
-    def test_uses_dotconfig_when_config_missing(self, tmp_path):
-        _make_config(tmp_path / ".config")
-        assert find_config_dir(tmp_path) == (tmp_path / ".config").resolve()
+    def test_uses_dotconfig_dir_when_config_missing(self, tmp_path):
+        _make_config(tmp_path / ".dotconfig")
+        assert find_config_dir(tmp_path) == (tmp_path / ".dotconfig").resolve()
 
-    def test_uses_dotconfig_when_config_has_no_dotconfig_files(self, tmp_path):
+    def test_uses_dotconfig_dir_when_config_has_no_dotconfig_files(self, tmp_path):
         (tmp_path / "config").mkdir()
         (tmp_path / "config" / "webpack.js").write_text("")
-        _make_config(tmp_path / ".config")
-        assert find_config_dir(tmp_path) == (tmp_path / ".config").resolve()
+        _make_config(tmp_path / ".dotconfig")
+        assert find_config_dir(tmp_path) == (tmp_path / ".dotconfig").resolve()
 
     def test_prefers_valid_config_over_dotconfig(self, tmp_path):
         _make_config(tmp_path / "config")
-        _make_config(tmp_path / ".config")
+        _make_config(tmp_path / ".dotconfig")
         assert find_config_dir(tmp_path) == (tmp_path / "config").resolve()
 
     def test_ignores_dotconfig_without_dotconfig_files(self, tmp_path):
-        (tmp_path / ".config" / "nvim").mkdir(parents=True)
+        (tmp_path / ".dotconfig" / "nvim").mkdir(parents=True)
         assert find_config_dir(tmp_path) is None
 
     def test_empty_config_still_returned_when_nothing_valid(self, tmp_path):
         (tmp_path / "config").mkdir()
-        (tmp_path / ".config" / "nvim").mkdir(parents=True)
+        (tmp_path / ".dotconfig" / "nvim").mkdir(parents=True)
         assert find_config_dir(tmp_path) == (tmp_path / "config").resolve()
 
     def test_walks_up_to_dotconfig(self, tmp_path):
-        _make_config(tmp_path / ".config")
+        _make_config(tmp_path / ".dotconfig")
         sub = tmp_path / "src" / "app"
         sub.mkdir(parents=True)
-        assert find_config_dir(sub) == (tmp_path / ".config").resolve()
+        assert find_config_dir(sub) == (tmp_path / ".dotconfig").resolve()
 
     def test_nearest_valid_level_wins(self, tmp_path):
         _make_config(tmp_path / "config")
         mid = tmp_path / "pkg"
-        _make_config(mid / ".config")
-        assert find_config_dir(mid) == (mid / ".config").resolve()
+        _make_config(mid / ".dotconfig")
+        assert find_config_dir(mid) == (mid / ".dotconfig").resolve()
 
     def test_env_var_disables_fallback(self, tmp_path, monkeypatch):
         monkeypatch.setenv(ENV_VAR, "cfg")
-        _make_config(tmp_path / ".config")
+        _make_config(tmp_path / ".dotconfig")
         assert find_config_dir(tmp_path) is None
 
 
@@ -247,7 +247,7 @@ class TestCliUsesFallback:
         monkeypatch.delenv("DOTCONFIG_DIR", raising=False)
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".git").mkdir()
-        _make_config(tmp_path / ".config")
+        _make_config(tmp_path / ".dotconfig")
         result = CliRunner().invoke(cli, ["load", "dev", "-S"])
         assert result.exit_code == 0, result.output
         assert "A=1" in result.output
@@ -261,7 +261,7 @@ class TestCliUsesFallback:
         monkeypatch.delenv("DOTCONFIG_DIR", raising=False)
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".git").mkdir()
-        cfg = _make_config(tmp_path / ".config")
+        cfg = _make_config(tmp_path / ".dotconfig")
         (cfg / "dev" / "app.yaml").write_text("x: 1\n")
         result = CliRunner().invoke(cli, ["load", "dev", "--file", "app.yaml"])
         assert result.exit_code == 0, result.output

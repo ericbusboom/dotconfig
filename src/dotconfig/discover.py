@@ -26,7 +26,7 @@ def config_dir_name() -> str:
     return os.environ.get(ENV_VAR, DEFAULT_NAME)
 
 
-FALLBACK_NAME = ".config"
+FALLBACK_NAME = ".dotconfig"
 
 # Entries whose presence marks a directory as a dotconfig config root.
 _MARKER_FILES = ("sops.yaml", "dotconfig.yaml")
@@ -86,7 +86,7 @@ def find_config_dir(start: Optional[Path] = None) -> Optional[Path]:
     When ``DOTCONFIG_NAME`` is set, the first directory with that name wins.
     Otherwise, at each level ``config/`` is used if it looks like a dotconfig
     directory (see :func:`looks_like_config_dir`); if it is missing or holds
-    no dotconfig files, ``.config/`` is used when it does.  If neither
+    no dotconfig files, ``.dotconfig/`` is used when it does.  If neither
     qualifies anywhere, the nearest existing ``config/`` is returned, so a
     freshly created (still empty) config directory is still found.
 

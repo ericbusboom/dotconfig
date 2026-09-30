@@ -184,9 +184,9 @@ Otherwise dotconfig walks up from the current directory to the git root.
 At each level it uses `config/` if that holds dotconfig files (`sops.yaml`,
 `dotconfig.yaml`, `keys/`, `local/`, or a deployment dir with
 `public.env`/`secrets.env`); if `config/` is missing or holds none of
-these, it uses `.config/` when that does. If neither qualifies it falls
+these, it uses `.dotconfig/` when that does. If neither qualifies it falls
 back to `./config`. Setting `DOTCONFIG_NAME` searches for that one name
-only, with no `.config` fallback.
+only, with no `.dotconfig` fallback.
 
 ### `dotconfig --instructions`
 
