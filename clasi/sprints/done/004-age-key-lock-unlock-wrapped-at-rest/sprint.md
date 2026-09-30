@@ -1,7 +1,7 @@
 ---
 id: '004'
 title: Age key lock/unlock (wrapped at rest)
-status: executing
+status: done
 branch: sprint/004-age-key-lock-unlock-wrapped-at-rest
 use-cases:
 - SUC-001
