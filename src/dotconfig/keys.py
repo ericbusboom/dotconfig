@@ -2,8 +2,7 @@
 Keys command: inspect age encryption key configuration.
 
 Reports where SOPS will find your age secret key, shows the derived
-public key, and prints export statements for setting environment
-variables as an alternative to the key file.
+public key, and lock state and wrapped methods.
 """
 
 import os
@@ -11,6 +10,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from . import keystore, keywrap
 from .init import _extract_secret_key, _is_age_installed, _read_key_from_file
 from .output import error, heading, info, item, ok, warn
 
@@ -29,6 +29,43 @@ def _derive_public_key_quiet(secret_key: str) -> Optional[str]:
         return pub if pub else None
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
+
+
+def _show_lock_state() -> None:
+    """Report locked/unlocked/not wrapped, wrapped methods and env warnings."""
+    kp = keystore.key_path()
+    methods, _from_sidecar = keywrap.list_wrapped()
+    sidecar_exists = keystore.sidecar_path().exists()
+    plain_present = kp.exists()
+
+    heading("🔒 Lock state:")
+    if not sidecar_exists and not methods:
+        state = "not wrapped"
+    elif plain_present:
+        state = "unlocked"
+    else:
+        state = "locked"
+    info(f"state: {state} ({kp})")
+    if state == "not wrapped":
+        info("Run 'dotconfig key wrap' to keep an encrypted copy of the key.")
+
+    if methods:
+        verified = {
+            m.get("file"): m.get("verified")
+            for m in keystore.load_sidecar()["methods"]
+        }
+        heading("Wrapped methods:")
+        for m in methods:
+            when = verified.get(m.path.name)
+            when_txt = f"verified {when}" if when else "never verified"
+            label = f" {m.label}" if m.label else ""
+            item(f"  {m.kind}{label} — {when_txt}")
+
+    if os.environ.get("SOPS_AGE_KEY"):
+        warn(
+            "SOPS_AGE_KEY is set in the environment. It survives 'dotconfig lock' "
+            "and defeats locking; unset it and use SOPS_AGE_KEY_FILE instead."
+        )
 
 
 def show_keys() -> None:
@@ -101,6 +138,9 @@ def show_keys() -> None:
     else:
         item(f"  {default_key_file} — not found")
 
+    # --- Lock state ---
+    _show_lock_state()
+
     # --- Summary ---
     if secret_key is None:
         heading("❌ No age key found")
@@ -116,37 +156,9 @@ def show_keys() -> None:
     else:
         warn("could not derive public key")
 
-    # --- Export suggestions ---
-    heading("📋 Environment variable exports:")
-    info("To use env vars instead of the key file, add to your shell profile:")
-    print()
-
-    # Show the secret key value (reading from file if needed)
-    if found_source == "SOPS_AGE_KEY":
-        # Already in env, show current value
-        item(f'  export SOPS_AGE_KEY="{secret_key}"')
-    elif found_source and found_source.startswith("SOPS_AGE_KEY_FILE"):
-        # Point to the file
-        file_path = os.environ["SOPS_AGE_KEY_FILE"]
-        item(f'  export SOPS_AGE_KEY_FILE="{file_path}"')
-        print()
-        info("Or inline the key directly:")
-        item(f'  export SOPS_AGE_KEY="{secret_key}"')
-    else:
-        # From default file
-        item(f'  export SOPS_AGE_KEY_FILE="{default_key_file}"')
-        print()
-        info("Or inline the key directly:")
-        item(f'  export SOPS_AGE_KEY="{secret_key}"')
-
-    # --- Codespaces / CI secret guidance ---
-    heading("☁️  GitHub Codespaces / CI:")
-    info("To use your age key in Codespaces, add it as a repository secret:")
-    print()
-    item("  Secret name:  SOPS_AGE_KEY")
-    item(f"  Secret value: {secret_key}")
-    print()
-    info("Via the GitHub CLI:")
-    item(f'  gh secret set SOPS_AGE_KEY --body "{secret_key}"')
-    print()
-    info("Or set it in repo Settings → Secrets and variables → Codespaces.")
+    # --- Guidance (never prints the secret key) ---
+    heading("📋 Using the key:")
+    info("Point SOPS at the key file (do not inline the secret in the environment):")
+    item(f'  export SOPS_AGE_KEY_FILE="{keystore.key_path()}"')
+    info("Protect it at rest with 'dotconfig key wrap' and 'dotconfig lock'.")
+    info("To push the key to GitHub use 'dotconfig gh-push --include-age-key'.")
