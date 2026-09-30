@@ -804,6 +804,11 @@ def unlock_cmd(with_method, identity, paste) -> None:
         dotconfig age unlock
         dotconfig age unlock --with pass
         dotconfig age unlock --identity /Volumes/USB/recovery.txt
+        dotconfig age unlock --with recovery --identity /Volumes/USB/recovery.txt
+
+    A passphrase-protected identity file is decrypted once (one prompt), in
+    memory; it is matched to the wrapped file by recipient, so se/yubikey
+    are never tried with a non-plugin identity.
     """
     import sys
 

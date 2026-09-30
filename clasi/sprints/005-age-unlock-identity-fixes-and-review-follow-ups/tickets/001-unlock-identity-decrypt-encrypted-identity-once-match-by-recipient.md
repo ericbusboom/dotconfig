@@ -1,8 +1,9 @@
 ---
 id: '001'
 title: 'unlock --identity: decrypt encrypted identity once, match by recipient'
-status: open
-use-cases: [SUC-001]
+status: done
+use-cases:
+- SUC-001
 depends-on: []
 github-issue: ''
 issue: age-unlock-identity-review-findings.md
@@ -20,13 +21,13 @@ Plan: in keystore.py add identity-kind detection (plugin `AGE-PLUGIN-`; encrypte
 
 ## Acceptance Criteria
 
-- [ ] Sidecar with se, pass, recovery + passphrase-protected identity: `unlock --identity FILE` (no --with) prompts for the passphrase exactly once and unlocks via recovery (TTY-harness test asserts one prompt)
-- [ ] Wrong identity passphrase yields a message about the identity's passphrase being wrong / matching no wrapped file, not per-method 'age failed'
-- [ ] Plain identity file still unlocks; plugin identity (AGE-PLUGIN-...) still unlocks se/yubikey
-- [ ] se/yubikey are never attempted with a non-plugin identity
-- [ ] Decrypted identity is never written to disk (test asserts via runner seam that identity goes via stdin/fd and no temp file is created)
-- [ ] `unlock --help` mentions `--with recovery --identity FILE`
-- [ ] Tests use existing conftest isolation and never touch the real key
+- [x] Sidecar with se, pass, recovery + passphrase-protected identity: `unlock --identity FILE` (no --with) prompts for the passphrase exactly once and unlocks via recovery (TTY-harness test asserts one prompt)
+- [x] Wrong identity passphrase yields a message about the identity's passphrase being wrong / matching no wrapped file, not per-method 'age failed'
+- [x] Plain identity file still unlocks; plugin identity (AGE-PLUGIN-...) still unlocks se/yubikey
+- [x] se/yubikey are never attempted with a non-plugin identity
+- [x] Decrypted identity is never written to disk (test asserts via runner seam that identity goes via stdin/fd and no temp file is created)
+- [x] `unlock --help` mentions `--with recovery --identity FILE`
+- [x] Tests use existing conftest isolation and never touch the real key
 
 ## Testing
 

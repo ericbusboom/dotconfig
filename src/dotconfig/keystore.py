@@ -171,7 +171,10 @@ _AGE_INSTALL = "brew install age"
 
 
 def _default_runner(
-    cmd: list[str], input: Optional[bytes] = None, interactive: bool = False
+    cmd: list[str],
+    input: Optional[bytes] = None,
+    interactive: bool = False,
+    pass_fds: tuple[int, ...] = (),
 ) -> "subprocess.CompletedProcess[bytes]":
     """Run ``cmd``. ``interactive`` leaves stderr on the terminal so age can
     prompt (age reads passphrases from /dev/tty)."""
@@ -180,6 +183,7 @@ def _default_runner(
         input=input,
         stdout=subprocess.PIPE,
         stderr=None if interactive else subprocess.PIPE,
+        pass_fds=pass_fds,
         check=False,
     )
 
@@ -201,11 +205,15 @@ def _require_plugin_for(identity_or_recipient: str) -> None:
 
 
 def _run(
-    cmd: list[str], input: Optional[bytes] = None, interactive: bool = False
+    cmd: list[str],
+    input: Optional[bytes] = None,
+    interactive: bool = False,
+    pass_fds: tuple[int, ...] = (),
 ) -> bytes:
     _require(cmd[0], _AGE_INSTALL)
+    extra = {"pass_fds": pass_fds} if pass_fds else {}
     try:
-        proc = runner(cmd, input=input, interactive=interactive)
+        proc = runner(cmd, input=input, interactive=interactive, **extra)
     except FileNotFoundError as e:
         raise AgeToolError(f"{cmd[0]} not found. Install it with: {_AGE_INSTALL}") from e
     if proc.returncode != 0:
@@ -256,3 +264,70 @@ def age_decrypt_identity(wrapped: Path, identity_file: Path) -> bytes:
 def age_decrypt_passphrase(wrapped: Path) -> bytes:
     """Decrypt a passphrase-wrapped file; age prompts on the TTY."""
     return _run(["age", "-d", str(wrapped)], interactive=True)
+
+
+# ---------------------------------------------------------------------------
+# Identity files (kind detection, decrypt-once, in-memory use)
+# ---------------------------------------------------------------------------
+
+_ENCRYPTED_MAGIC = (b"age-encryption.org/v1", b"-----BEGIN AGE ENCRYPTED FILE-----")
+
+
+def identity_kind_of(data: bytes) -> str:
+    """Classify identity bytes: ``"encrypted"`` (passphrase-protected age
+    file, binary or armored), ``"plugin"`` (holds an AGE-PLUGIN-... line) or
+    ``"plain"``."""
+    if data.lstrip().startswith(_ENCRYPTED_MAGIC):
+        return "encrypted"
+    for line in data.decode(errors="replace").splitlines():
+        if line.strip().upper().startswith("AGE-PLUGIN-"):
+            return "plugin"
+    return "plain"
+
+
+def identity_kind(identity_file: Path) -> str:
+    """Classify an identity file (see ``identity_kind_of``)."""
+    try:
+        return identity_kind_of(Path(identity_file).read_bytes())
+    except OSError as e:
+        raise AgeToolError(f"cannot read identity file {identity_file}: {e}") from e
+
+
+def age_decrypt_identity_file(identity_file: Path) -> bytes:
+    """Decrypt a passphrase-protected identity file ONCE; age prompts on the
+    TTY. The plaintext identity is returned in memory and never written."""
+    return _run(["age", "-d", str(identity_file)], interactive=True)
+
+
+def age_public_keys_of_identity(identity_bytes: bytes) -> list[str]:
+    """Public keys of the (native) identities in ``identity_bytes``."""
+    out = _run(["age-keygen", "-y"], input=identity_bytes)
+    return [l.strip() for l in out.decode().splitlines() if l.strip()]
+
+
+def age_decrypt_with_identity_bytes(
+    wrapped: Path, identity_bytes: bytes, interactive: bool = False
+) -> bytes:
+    """Decrypt ``wrapped`` with an identity held in memory.
+
+    The identity goes to age on stdin (``-i /dev/stdin``); where that device
+    node does not exist it goes through an inherited pipe (``/dev/fd/N``).
+    It is never written to a file."""
+    if os.path.exists("/dev/stdin"):
+        return _run(
+            ["age", "-d", "-i", "/dev/stdin", str(wrapped)],
+            input=identity_bytes, interactive=interactive,
+        )
+    rfd, wfd = os.pipe()
+    try:
+        os.write(wfd, identity_bytes)  # identities are far below the pipe buffer
+        os.close(wfd)
+        wfd = -1
+        return _run(
+            ["age", "-d", "-i", f"/dev/fd/{rfd}", str(wrapped)],
+            interactive=interactive, pass_fds=(rfd,),
+        )
+    finally:
+        os.close(rfd)
+        if wfd != -1:
+            os.close(wfd)

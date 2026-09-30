@@ -257,6 +257,7 @@ class WrappedMethod:
     label: Optional[str] = None
     hint: Optional[str] = None
     identity_file: Optional[str] = None
+    recipient: Optional[str] = None
 
 
 def is_gui_session() -> bool:
@@ -327,7 +328,7 @@ def list_wrapped() -> tuple[list[WrappedMethod], bool]:
         if p.exists():
             out.append(WrappedMethod(ident(fname), m.get("kind", "identity"), p,
                                      m.get("label"), m.get("hint"),
-                                     m.get("identity_file")))
+                                     m.get("identity_file"), m.get("recipient")))
     if sidecar["methods"] or sidecar.get("public_key"):
         return out, True
     for p in sorted(kp.parent.glob(f"{kp.name}.*.age")) if kp.parent.exists() else []:
@@ -360,6 +361,84 @@ def _decrypt_method(m: WrappedMethod, identity: Optional[Path]) -> str:
     if secret is None:
         raise AgeToolError(f"{m.method_id}: decrypted data holds no AGE-SECRET-KEY")
     return secret
+
+
+def _unlock_with_identity(
+    methods: list[WrappedMethod], with_method: Optional[str], identity: Path
+) -> tuple[str, str]:
+    """Open a wrapped file with ``--identity FILE``; returns (secret, method).
+
+    An encrypted identity is decrypted exactly once (one passphrase prompt),
+    in memory, and used via stdin for every attempt. Candidates are chosen by
+    matching the identity's public key to each sidecar recipient; se/yubikey
+    are tried only with plugin identities, never with native ones."""
+    if not methods:
+        raise UnlockError("no wrapped file to open with --identity")
+    try:
+        kind = keystore.identity_kind(identity)
+        blob: Optional[bytes] = None
+        if kind == "encrypted":
+            try:
+                blob = keystore.age_decrypt_identity_file(identity)
+            except AgeToolError as e:
+                raise UnlockError(
+                    f"the identity's passphrase was wrong (or {identity} is not "
+                    f"a valid age identity); nothing was tried against the "
+                    "wrapped files"
+                ) from e
+            kind = keystore.identity_kind_of(blob)
+        pubs = keystore.age_public_keys_of_identity(blob if blob is not None
+                                                   else identity.read_bytes()) \
+            if kind == "plain" else []
+    except AgeToolError as e:
+        raise UnlockError(str(e)) from e
+
+    pool = _select(methods, with_method) if with_method else [
+        m for m in methods if m.kind != "passphrase"]
+    if with_method and not pool:
+        have = ", ".join(m.method_id for m in methods)
+        raise UnlockError(f"no method {with_method!r}; available: {have}")
+
+    plugin_kinds = ("se", "yubikey")
+    if kind == "plugin":
+        cands = [m for m in pool if m.kind in plugin_kinds]
+        if not cands:
+            raise UnlockError(
+                "the identity is a plugin identity (AGE-PLUGIN-...) but no "
+                "se/yubikey wrapped file was selected; checked: "
+                + ", ".join(m.method_id for m in pool))
+    else:
+        cands = [m for m in pool if m.kind not in plugin_kinds]
+        if not cands:
+            raise UnlockError(
+                "the identity is not a plugin identity, so it cannot open "
+                "se/yubikey wrapped files; checked: "
+                + ", ".join(m.method_id for m in pool))
+        # Match by recipient; entries with no recorded recipient are kept.
+        cands = [m for m in cands if m.recipient is None or m.recipient in pubs]
+        if not cands:
+            checked = ", ".join(f"{m.method_id} ({m.recipient})" for m in pool
+                                if m.kind not in plugin_kinds)
+            raise UnlockError(
+                f"identity matches no wrapped file (identity public key: "
+                f"{', '.join(pubs) or 'unknown'}; checked: {checked}). "
+                "Is this the right recovery identity?")
+
+    errors: list[str] = []
+    for m in cands:
+        try:
+            if blob is not None:
+                plain = keystore.age_decrypt_with_identity_bytes(
+                    m.path, blob, interactive=(kind == "plugin"))
+            else:
+                plain = keystore.age_decrypt_identity(m.path, identity)
+            secret = extract_secret(plain.decode(errors="replace"))
+            if secret is None:
+                raise AgeToolError(f"{m.method_id}: decrypted data holds no AGE-SECRET-KEY")
+            return secret, m.method_id
+        except AgeToolError as e:
+            errors.append(f"{m.method_id}: {e}")
+    raise UnlockError("identity opened no wrapped file. " + "; ".join(errors))
 
 
 def _default_order(methods: list[WrappedMethod]) -> list[WrappedMethod]:
@@ -406,19 +485,7 @@ def unlock(
     if paste:
         secret, used = read_secret_tty(), "paste"
     elif identity is not None:
-        cands = _select(methods, with_method) if with_method else [
-            m for m in methods if m.kind != "passphrase"]
-        if not cands:
-            raise UnlockError("no wrapped file to open with --identity")
-        used = ""
-        for m in cands:
-            try:
-                secret, used = _decrypt_method(m, Path(identity)), m.method_id
-                break
-            except AgeToolError as e:
-                errors.append(f"{m.method_id}: {e}")
-        if secret is None:
-            raise UnlockError("identity opened no wrapped file. " + "; ".join(errors))
+        secret, used = _unlock_with_identity(methods, with_method, Path(identity))
     else:
         if not methods:
             raise UnlockError(
