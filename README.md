@@ -240,7 +240,22 @@ dotconfig load -d prod -S | jq .
 
 # Keep the export prefix on stdout when you really want to source it
 dotconfig load -d prod -S --add-export
+
+# Same layers as the current .env, but every secret value blanked
+dotconfig load --public
+dotconfig load prod --public
 ```
+
+When using `--public`, every secret key is written with an empty value
+(`KEY=`), so tools that read the `.env` see every variable but no
+secret. With no deployment name it reloads the deployment and locals
+recorded in the current `.env` header, so `dotconfig load prod` followed
+by `dotconfig load --public` swaps the decrypted file for a blanked one.
+Key names are read from the encrypted files without decrypting them, so
+it works while the age key is locked. The output is marked
+(`# CONFIG_PUBLIC=true`, or `_dotconfig.public` in JSON/YAML) and
+`dotconfig save` refuses it, so the blanks can't overwrite real secrets.
+Incompatible with `--file`, `--embed` and `--flat`.
 
 When using `--file`, specify either `-d` or `-l` (not both) — the file
 lives in one location only.

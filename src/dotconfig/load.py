@@ -382,12 +382,44 @@ def _to_layer_list(value) -> list:
     return list(value)
 
 
+PUBLIC_MARKER = "# CONFIG_PUBLIC=true"
+
+
+def _blank_secrets(text: str) -> str:
+    """Return ``KEY=`` lines for every key in a secrets dotenv, values removed.
+
+    Works on the raw file, SOPS-encrypted or not: SOPS keeps dotenv key
+    names in the clear, so nothing is decrypted.  SOPS metadata keys
+    (``sops_*``) and comments are dropped; an ``export `` prefix is kept.
+    """
+    lines: list = []
+    seen: set = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        prefix = ""
+        if line.startswith("export "):
+            prefix = "export "
+            line = line[len("export "):].lstrip()
+        key = line.split("=", 1)[0].strip()
+        if not key or key.startswith("sops_") or key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"{prefix}{key}=")
+    return "\n".join(lines)
+
+
 def _read_env_layers(
     deployments: list,
     locals_: list,
     config_dir: Path,
+    public_only: bool = False,
 ) -> tuple:
     """Read all .env layers (deploy + local) and return them in layer order.
+
+    When *public_only* is True, secrets files are not decrypted: each
+    secret key is kept with an empty value (see ``_blank_secrets``).
 
     Returns ``(sops_config, deploy_layers, local_layers)`` where each layer
     list contains tuples of ``(name, public_text, secrets_text)``.
@@ -407,7 +439,10 @@ def _read_env_layers(
         secrets_text = ""
         secrets_env = config_dir / deployment / "secrets.env"
         if secrets_env.exists():
-            secrets_text = _read_file_content(secrets_env, sops_config).strip()
+            if public_only:
+                secrets_text = _blank_secrets(secrets_env.read_text())
+            else:
+                secrets_text = _read_file_content(secrets_env, sops_config).strip()
 
         deploy_layers.append((deployment, public_text, secrets_text))
 
@@ -423,7 +458,10 @@ def _read_env_layers(
         local_secrets_text = ""
         secrets_local = config_dir / "local" / local / "secrets.env"
         if secrets_local.exists():
-            local_secrets_text = _read_file_content(secrets_local, sops_config).strip()
+            if public_only:
+                local_secrets_text = _blank_secrets(secrets_local.read_text())
+            else:
+                local_secrets_text = _read_file_content(secrets_local, sops_config).strip()
 
         local_layers.append((local, local_public_text, local_secrets_text))
 
@@ -577,6 +615,7 @@ def load_config(
     embed_files: tuple = (),
     no_export: bool = False,
     add_export: bool = False,
+    public_only: bool = False,
 ) -> None:
     """Assemble config source files into a single .env, JSON, or YAML file.
 
@@ -616,6 +655,12 @@ def load_config(
 
     When *to_stdout* is True the assembled content is printed to stdout
     instead of being written to a file.
+
+    When *public_only* is True, every secret key is written with an empty
+    value and nothing is decrypted (so it works while the age key is
+    locked).  The output is marked (``# CONFIG_PUBLIC=true`` in .env,
+    ``_dotconfig.public`` in JSON/YAML) so ``save`` refuses to write the
+    blanks back over the real secrets.
     """
     deployments = _to_layer_list(deployment)
     locals_ = _to_layer_list(local)
@@ -624,7 +669,9 @@ def load_config(
         error("at least one deployment is required")
         sys.exit(1)
 
-    _, deploy_layers, local_layers = _read_env_layers(deployments, locals_, config_dir)
+    _, deploy_layers, local_layers = _read_env_layers(
+        deployments, locals_, config_dir, public_only=public_only,
+    )
 
     # ---- Single-layer view used by structured (json/yaml) and split paths.
     # Both legacy code paths only handle one deployment + one local; the CLI
@@ -666,6 +713,8 @@ def load_config(
             # .env format
             public_parts: list = []
             public_parts.extend(_build_metadata_header(deployments, locals_))
+            if public_only:
+                public_parts.append(PUBLIC_MARKER)
             # Inject _VERSION if config/dotconfig.yaml has a version field.
             _dc_split = load_dotconfig_yaml(config_dir)
             if _dc_split and _dc_split.get("version"):
@@ -741,8 +790,11 @@ def load_config(
             result.update(local_public_dict)
             result.update(local_secrets_dict)
         else:
+            meta: Dict[str, Any] = {"deploy": deployment_first}
+            if public_only:
+                meta["public"] = True
             result = {
-                "_dotconfig": {"deploy": deployment_first},
+                "_dotconfig": meta,
                 deployment_first: {
                     "public": public_dict,
                     "secrets": secrets_dict,
@@ -773,6 +825,8 @@ def load_config(
         # ---- Classic .env output (multi-layer aware) ----
         parts: list = []
         parts.extend(_build_metadata_header(deployments, locals_))
+        if public_only:
+            parts.append(PUBLIC_MARKER)
         # Inject _VERSION if config/dotconfig.yaml has a version field.
         _dc = load_dotconfig_yaml(config_dir)
         if _dc and _dc.get("version"):

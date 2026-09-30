@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from .audit import _key_looks_secret
-from .load import _add_export_prefix, _env_lines_to_dict
+from .load import PUBLIC_MARKER, _add_export_prefix, _env_lines_to_dict
 from .keyguard import require_unlocked
 from .output import error, heading, info, ok, warn
 
@@ -626,6 +626,15 @@ def _dict_to_env_lines(data: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
+def _refuse_public_load(source: Path) -> None:
+    """Exit if *source* came from ``load --public`` (its secrets are blanks)."""
+    error(
+        f"{source} was loaded with --public, so its secret values are blank; "
+        "saving it would erase your secrets. Reload without --public, then save."
+    )
+    sys.exit(1)
+
+
 def _save_config_structured(
     env_file: Path,
     config_dir: Path,
@@ -645,6 +654,10 @@ def _save_config_structured(
         data = json.loads(content)
     else:
         data = yaml.safe_load(content) or {}
+
+    if isinstance(data, dict) and isinstance(data.get("_dotconfig"), dict) \
+            and data["_dotconfig"].get("public"):
+        _refuse_public_load(env_file)
 
     sops_config = config_dir / "sops.yaml"
     saved: List[Tuple[str, str]] = []
@@ -899,6 +912,9 @@ def save_config(
         return
 
     content = env_file.read_text()
+
+    if PUBLIC_MARKER in content.splitlines():
+        _refuse_public_load(env_file)
 
     # Extract SOPS key path from the file itself before any section parsing
     # so that sops can be invoked correctly when the variable is stored there.

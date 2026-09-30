@@ -541,6 +541,13 @@ tooling). `--split` produces two files: a public `.env` plus an
 `.env.secret` companion — useful when you want to gitignore one half
 and check the other in.
 
+**Secrets blanked: `--public`.** `dotconfig load --public` rewrites the
+current `.env` (same deployment/locals as its header) with every secret
+key present but empty (`KEY=`). It never decrypts, so it works while the
+age key is locked. Use it when a tool needs the full variable list but
+must not see secret values. `dotconfig save` refuses a `--public` file;
+reload without `--public` before editing and saving.
+
 ---
 
 ## Worked example: a full project lifecycle

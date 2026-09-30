@@ -324,6 +324,14 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
          "-S/--stdout, or to normalize source files that mix prefixed and "
          "plain assignments.",
 )
+@click.option(
+    "--public", "public_only",
+    is_flag=True,
+    default=False,
+    help="Blank every secret value (KEY=). With no names, reloads the "
+         "deployment/local recorded in the current .env. Never decrypts, so "
+         "it works while the age key is locked; 'save' refuses the result.",
+)
 @click.pass_context
 def load(
     ctx: click.Context,
@@ -340,6 +348,7 @@ def load(
     embed_files: Tuple[str, ...],
     no_export: bool,
     add_export: bool,
+    public_only: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -365,6 +374,10 @@ def load(
     Use --split to write public values to the main file and secret
     values to a companion .secret file (e.g. .env + .env.secret).
 
+    Use --public to write every secret key with an empty value, so
+    consumers see all variables but no secrets. Without names it
+    reloads whatever deployment/local the current .env was loaded from.
+
     Example:
 
     \b
@@ -380,6 +393,8 @@ def load(
         dotconfig load -d prod --split
         dotconfig load -d prod -e CERT_FILE        # one *_FILE var
         dotconfig load -d prod -e                  # all *_FILE vars
+        dotconfig load --public                    # current .env, secrets blanked
+        dotconfig load prod --public
     """
     if use_json and use_yaml:
         raise click.UsageError("--json and --yaml are mutually exclusive")
@@ -410,6 +425,12 @@ def load(
                 f"--embed argument must be an UPPERCASE *_FILE variable name, "
                 f"got: {v!r}"
             )
+    if public_only and filename:
+        raise click.UsageError("--public cannot be used with --file")
+    if public_only and embed_files:
+        raise click.UsageError("--public cannot be used with --embed")
+    if public_only and flat:
+        raise click.UsageError("--public cannot be used with --flat")
     if no_export and filename:
         raise click.UsageError("--no-export cannot be used with --file")
     # --no-export with --json/--yaml is a silent no-op: structured output
@@ -454,12 +475,6 @@ def load(
         deploys = [deploy] if deploy else []
         locals_ = [local] if local else []
 
-    if (use_json or use_yaml) and (len(deploys) > 1 or len(locals_) > 1):
-        raise click.UsageError(
-            "--json/--yaml only support a single deployment and a single local "
-            "in this release (multi-layer stacks coming in a future sprint)"
-        )
-
     fmt = "json" if use_json else ("yaml" if use_yaml else "env")
 
     # Resolve -o flag: None = config/files/ (default), "." = CWD, else explicit path
@@ -474,6 +489,31 @@ def load(
         out = Path(output)
     else:
         out = None
+
+    # --public with no deployment: reload the layers recorded in the current .env
+    if public_only and not deploys:
+        from .save import _parse_env_layers
+
+        current = out if (out and fmt == "env") else Path(".env")
+        if not current.exists():
+            raise click.UsageError(
+                f"--public with no deployment reloads the current .env, but "
+                f"{current} does not exist; pass a deployment name"
+            )
+        env_deploys, env_locals, _ = _parse_env_layers(current.read_text())
+        if not env_deploys:
+            raise click.UsageError(
+                f"no CONFIG_DEPLOY header in {current}; pass a deployment name"
+            )
+        deploys = env_deploys
+        if not locals_:
+            locals_ = env_locals
+
+    if (use_json or use_yaml) and (len(deploys) > 1 or len(locals_) > 1):
+        raise click.UsageError(
+            "--json/--yaml only support a single deployment and a single local "
+            "in this release (multi-layer stacks coming in a future sprint)"
+        )
 
     if filename:
         if fmt != "env":
@@ -505,7 +545,11 @@ def load(
             embed_files=embed_files,
             no_export=no_export,
             add_export=add_export,
+            public_only=public_only,
         )
+        if public_only and not to_stdout:
+            from .output import ok as _ok
+            _ok("Secret values blanked (--public); 'dotconfig save' will refuse this file")
 
     hook_args = [str(cfg.resolve())]
     if deploys:
