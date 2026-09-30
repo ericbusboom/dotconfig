@@ -1,9 +1,12 @@
 ---
 id: '004'
 title: dotconfig lock
-status: open
-use-cases: ["SUC-003"]
-depends-on: ["001", "002"]
+status: in-progress
+use-cases:
+- SUC-003
+depends-on:
+- '001'
+- '002'
 github-issue: ''
 issue: age-key-lock-unlock.md
 completes_issue: true
