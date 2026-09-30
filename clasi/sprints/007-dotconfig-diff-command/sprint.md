@@ -1,7 +1,7 @@
 ---
 id: '007'
 title: dotconfig diff command
-status: ticketing
+status: executing
 branch: sprint/007-dotconfig-diff-command
 use-cases:
 - SUC-001
