@@ -1,5 +1,8 @@
 ---
-status: open
+status: in-progress
+sprint: '006'
+tickets:
+- 006-001
 ---
 
 # `dotconfig age status` says "locked, but SOPS_AGE_KEY is set" while unlocked
