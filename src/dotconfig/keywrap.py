@@ -222,3 +222,246 @@ def wrap(specs: list[MethodSpec], today: Optional[str] = None) -> list[WrapResul
     sidecar["public_key"] = public_key
     today = today or date.today().isoformat()
     return [wrap_method(s, secret, public_key, sidecar, today) for s in specs]
+
+
+# ---------------------------------------------------------------------------
+# Unlock
+# ---------------------------------------------------------------------------
+#
+# Human presence is the point: there is no flag, environment variable or piped
+# stdin that supplies a secret. age prompts for passphrases on /dev/tty itself,
+# plugins prompt via the OS / device, and --paste reads from a real TTY only.
+
+
+class UnlockError(Exception):
+    """Unlock failed; nothing was written."""
+
+
+@dataclass
+class UnlockResult:
+    status: str  # "already-unlocked" | "unlocked"
+    method: Optional[str] = None
+    path: Optional[Path] = None
+    degraded: bool = False
+
+
+@dataclass
+class WrappedMethod:
+    method_id: str
+    kind: str
+    path: Path
+    label: Optional[str] = None
+    hint: Optional[str] = None
+    identity_file: Optional[str] = None
+
+
+def is_gui_session() -> bool:
+    """True when a desktop session can show Touch ID / pinentry-style prompts."""
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return False
+    import sys
+
+    if sys.platform == "darwin":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def device_present(kind: str) -> bool:
+    """Is the plugin for ``kind`` installed and (for yubikey) a device attached?"""
+    import shutil
+
+    if kind == "se":
+        return shutil.which("age-plugin-se") is not None
+    if kind == "yubikey":
+        if shutil.which("age-plugin-yubikey") is None:
+            return False
+        try:
+            proc = keystore.runner(["age-plugin-yubikey", "--list"])
+        except OSError:
+            return False
+        return proc.returncode == 0 and bool((proc.stdout or b"").strip())
+    return True
+
+
+def read_secret_tty() -> str:
+    """Read an ``AGE-SECRET-KEY-1...`` from the terminal with no echo.
+
+    Only from a real TTY: piped/redirected stdin is refused."""
+    import getpass
+    import sys
+
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        raise UnlockError(
+            "--paste needs an interactive terminal (stdin is not a TTY); the "
+            "key is never read from a pipe or file"
+        )
+    text = getpass.getpass("Paste AGE-SECRET-KEY (input hidden): ")
+    secret = extract_secret(text)
+    if secret is None:
+        raise UnlockError("input is not an AGE-SECRET-KEY-1... value")
+    return secret
+
+
+def list_wrapped() -> tuple[list[WrappedMethod], bool]:
+    """Wrapped files known for this key. Returns (methods, from_sidecar).
+
+    Sidecar entries whose file is missing are dropped. Without a sidecar the
+    directory is globbed (``*.pending.age`` leftovers ignored)."""
+    kp = keystore.key_path()
+    prefix, suffix = f"{kp.name}.", ".age"
+
+    def ident(name: str) -> str:
+        return name[len(prefix):-len(suffix)]
+
+    sidecar = keystore.load_sidecar()
+    out: list[WrappedMethod] = []
+    for m in sidecar["methods"]:
+        fname = m.get("file")
+        if not fname:
+            continue
+        p = kp.with_name(fname)
+        if p.exists():
+            out.append(WrappedMethod(ident(fname), m.get("kind", "identity"), p,
+                                     m.get("label"), m.get("hint"),
+                                     m.get("identity_file")))
+    if sidecar["methods"] or sidecar.get("public_key"):
+        return out, True
+    for p in sorted(kp.parent.glob(f"{kp.name}.*.age")) if kp.parent.exists() else []:
+        if p.name.endswith(".pending.age"):
+            continue
+        mid = ident(p.name)
+        kind = mid if mid in ("se", "yubikey") else (
+            "passphrase" if mid == PASSPHRASE_ID else "identity")
+        out.append(WrappedMethod(mid, kind, p))
+    return out, False
+
+
+def _select(methods: list[WrappedMethod], name: str) -> list[WrappedMethod]:
+    name = "pass" if name == "passphrase" else name
+    hit = [m for m in methods if m.method_id == name]
+    return hit or [m for m in methods if m.kind == name]
+
+
+def _decrypt_method(m: WrappedMethod, identity: Optional[Path]) -> str:
+    if m.kind == "passphrase":
+        plain = keystore.age_decrypt_passphrase(m.path)
+    else:
+        idf = identity or (Path(m.identity_file).expanduser() if m.identity_file else None)
+        if idf is None:
+            raise AgeToolError(
+                f"{m.method_id} needs its plugin identity file: pass --identity FILE"
+            )
+        plain = keystore.age_decrypt_identity(m.path, idf)
+    secret = extract_secret(plain.decode(errors="replace"))
+    if secret is None:
+        raise AgeToolError(f"{m.method_id}: decrypted data holds no AGE-SECRET-KEY")
+    return secret
+
+
+def _default_order(methods: list[WrappedMethod]) -> list[WrappedMethod]:
+    order: list[WrappedMethod] = []
+    if is_gui_session():
+        order += [m for m in methods if m.kind == "se"]
+    order += [m for m in methods if m.kind == "yubikey" and device_present("yubikey")]
+    order += [m for m in methods if m.kind == "passphrase"]
+    return order
+
+
+def unlock(
+    with_method: Optional[str] = None,
+    identity: Optional[Path] = None,
+    paste: bool = False,
+) -> UnlockResult:
+    """Restore the plain key to ``$SOPS_AGE_KEY_FILE`` after a human proves
+    presence. Decrypts to memory, checks the public key, writes atomically."""
+    if paste and identity is not None:
+        raise UnlockError("--paste and --identity are mutually exclusive")
+    kp = keystore.key_path()
+    sidecar = keystore.load_sidecar()
+    expected = sidecar.get("public_key")
+
+    if kp.exists():
+        existing = extract_secret(kp.read_text())
+        if existing is not None:
+            try:
+                have = keystore.public_key_of(existing)
+            except AgeToolError as e:
+                raise UnlockError(str(e)) from e
+            if not expected or have == expected:
+                return UnlockResult("already-unlocked", path=kp)
+            raise UnlockError(
+                f"{kp} holds a different key ({have}) than the sidecar's "
+                f"({expected}); refusing to overwrite it"
+            )
+
+    methods, from_sidecar = list_wrapped()
+    used: str
+    secret: Optional[str] = None
+    errors: list[str] = []
+
+    if paste:
+        secret, used = read_secret_tty(), "paste"
+    elif identity is not None:
+        cands = _select(methods, with_method) if with_method else [
+            m for m in methods if m.kind != "passphrase"]
+        if not cands:
+            raise UnlockError("no wrapped file to open with --identity")
+        used = ""
+        for m in cands:
+            try:
+                secret, used = _decrypt_method(m, Path(identity)), m.method_id
+                break
+            except AgeToolError as e:
+                errors.append(f"{m.method_id}: {e}")
+        if secret is None:
+            raise UnlockError("identity opened no wrapped file. " + "; ".join(errors))
+    else:
+        if not methods:
+            raise UnlockError(
+                "no wrapped key files found next to "
+                f"{kp}; use --paste or --identity FILE, or run 'dotconfig key wrap' "
+                "while the key is unlocked"
+            )
+        if with_method:
+            order = _select(methods, with_method)
+            if not order:
+                have = ", ".join(m.method_id for m in methods)
+                raise UnlockError(f"no method {with_method!r}; available: {have}")
+        else:
+            order = _default_order(methods)
+        used = ""
+        for m in order:
+            try:
+                secret, used = _decrypt_method(m, None), m.method_id
+                break
+            except AgeToolError as e:
+                errors.append(f"{m.method_id}: {e}")
+        if secret is None:
+            tried = {m.method_id for m in order}
+            rest = [m for m in methods if m.method_id not in tried]
+            msg = "unlock failed. " + ("; ".join(errors) if errors
+                                       else "no method usable in this session.")
+            if rest:
+                msg += " Other methods: " + ", ".join(
+                    f"--with {m.method_id}" + (f" ({m.hint})" if m.hint else "")
+                    for m in rest)
+            msg += ". Also: --identity FILE, --paste"
+            raise UnlockError(msg)
+
+    try:
+        got = keystore.public_key_of(secret)
+    except AgeToolError as e:
+        raise UnlockError(str(e)) from e
+    degraded = not expected
+    if expected and got != expected:
+        raise UnlockError(
+            f"recovered key's public key ({got}) does not match the sidecar's "
+            f"({expected}); nothing written"
+        )
+    if degraded:
+        from .output import warn
+
+        warn("no sidecar public key to check against (degraded mode); key "
+             "written unverified. Run 'dotconfig key wrap' to record it.")
+    path = keystore.write_plain_key(secret)
+    return UnlockResult("unlocked", used, path, degraded)

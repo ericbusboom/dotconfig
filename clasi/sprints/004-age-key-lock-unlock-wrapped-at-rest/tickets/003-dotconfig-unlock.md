@@ -1,9 +1,13 @@
 ---
 id: '003'
 title: dotconfig unlock
-status: open
-use-cases: ["SUC-002", "SUC-005"]
-depends-on: ["001", "002"]
+status: done
+use-cases:
+- SUC-002
+- SUC-005
+depends-on:
+- '001'
+- '002'
 github-issue: ''
 issue: age-key-lock-unlock.md
 completes_issue: true
@@ -18,13 +22,13 @@ completes_issue: true
 
 ## Acceptance Criteria
 
-- [ ] Already unlocked and matching `public_key`: prints so, exit 0
-- [ ] Default order: se (GUI session only) -> yubikey (plugin + device present) -> passphrase; passphrase not auto-picked in a GUI session unless earlier methods unavailable/fail; remaining methods listed on failure
-- [ ] `--with` selects a method; `--identity FILE` decrypts an `identity`-kind file; `--paste` reads `AGE-SECRET-KEY-1...` with no echo and only from a real TTY, used in memory only
-- [ ] No passphrase flag, env var, or piped secret input exists; `--paste` without a TTY errors
-- [ ] Public-key mismatch against sidecar: nothing written, exit non-zero
-- [ ] Plain key written only to `$SOPS_AGE_KEY_FILE` via `write_plain_key` (0600, atomic); directory created if missing; nothing on stdout/logs
-- [ ] Works with no sidecar if `--identity`/`--paste` supplies a key matching an existing wrapped file's manual `age -d` (degraded mode, warns)
+- [x] Already unlocked and matching `public_key`: prints so, exit 0
+- [x] Default order: se (GUI session only) -> yubikey (plugin + device present) -> passphrase; passphrase not auto-picked in a GUI session unless earlier methods unavailable/fail; remaining methods listed on failure
+- [x] `--with` selects a method; `--identity FILE` decrypts an `identity`-kind file; `--paste` reads `AGE-SECRET-KEY-1...` with no echo and only from a real TTY, used in memory only
+- [x] No passphrase flag, env var, or piped secret input exists; `--paste` without a TTY errors
+- [x] Public-key mismatch against sidecar: nothing written, exit non-zero
+- [x] Plain key written only to `$SOPS_AGE_KEY_FILE` via `write_plain_key` (0600, atomic); directory created if missing; nothing on stdout/logs
+- [x] Works with no sidecar if `--identity`/`--paste` supplies a key matching an existing wrapped file's manual `age -d` (degraded mode, warns)
 
 ## Testing
 

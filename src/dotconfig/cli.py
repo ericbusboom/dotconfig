@@ -713,6 +713,43 @@ def save(
     run_hook(cfg, "save", hook_args)
 
 
+@cli.command("unlock")
+@click.option("--with", "with_method", default=None,
+              help="Method to use (se, yubikey, pass, or a wrapped label).")
+@click.option("--identity", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Age identity file that opens a wrapped key (e.g. on a USB drive).")
+@click.option("--paste", is_flag=True,
+              help="Type/paste AGE-SECRET-KEY-1... at a hidden prompt (TTY only).")
+def unlock_cmd(with_method, identity, paste) -> None:
+    """Restore the plain age key for this session.
+
+    Requires a human: Touch ID / YubiKey touch / passphrase prompt, an
+    identity file, or a pasted key. Default order: Secure Enclave (GUI
+    session), YubiKey (device present), passphrase. The recovered key's
+    public key must match the sidecar; the key is written only to
+    $SOPS_AGE_KEY_FILE (mode 0600).
+
+    \b
+        dotconfig unlock
+        dotconfig unlock --with pass
+        dotconfig unlock --identity /Volumes/USB/recovery.txt
+    """
+    import sys
+
+    from . import keywrap
+    from .output import error as _err, ok as _ok
+
+    try:
+        r = keywrap.unlock(with_method, Path(identity) if identity else None, paste)
+    except (keywrap.UnlockError, keywrap.WrapError) as e:
+        _err(str(e))
+        sys.exit(1)
+    if r.status == "already-unlocked":
+        _ok(f"already unlocked ({r.path})")
+    else:
+        _ok(f"unlocked via {r.method}: {r.path}")
+
+
 @cli.group()
 def key() -> None:
     """Manage SSH keys stored in config/keys/.
