@@ -120,6 +120,16 @@ config/
 Deployment names are open-ended — use any string that works as a directory
 name (`dev`, `prod`, `test`, `staging`, `ci`, …).
 
+**Where dotconfig looks for it.** `-c PATH` or `DOTCONFIG_DIR` wins.
+Otherwise dotconfig walks up from the current directory to the git root,
+and at each level uses `config/` if it holds dotconfig files (`sops.yaml`,
+`dotconfig.yaml`, `keys/`, `local/`, or a deployment directory with
+`public.env`/`secrets.env`). If `config/` is missing, or exists but holds
+none of those (say, a JavaScript project's own `config/`), it uses
+`.config/` when that does. If neither qualifies it falls back to
+`./config`. `DOTCONFIG_NAME=<name>` searches for that one name instead,
+with no fallback.
+
 ---
 
 ## Generated `.env` format

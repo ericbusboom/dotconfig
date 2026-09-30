@@ -9,8 +9,10 @@ from dotconfig.discover import (
     DEFAULT_NAME,
     ENV_VAR,
     _git_root,
+    FALLBACK_NAME,
     config_dir_name,
     find_config_dir,
+    looks_like_config_dir,
 )
 
 
@@ -141,3 +143,127 @@ class TestFindConfigDir:
         (tmp_path / "config").mkdir()
         result = find_config_dir()
         assert result == (tmp_path / "config").resolve()
+
+
+# ---------------------------------------------------------------------------
+# .config fallback
+# ---------------------------------------------------------------------------
+
+
+def _make_config(path: Path) -> Path:
+    """Create a minimal dotconfig directory (a deployment with public.env)."""
+    (path / "dev").mkdir(parents=True)
+    (path / "dev" / "public.env").write_text("A=1\n")
+    return path
+
+
+class TestLooksLikeConfigDir:
+    def test_missing_dir(self, tmp_path):
+        assert not looks_like_config_dir(tmp_path / "nope")
+
+    def test_empty_dir(self, tmp_path):
+        assert not looks_like_config_dir(tmp_path)
+
+    def test_unrelated_files(self, tmp_path):
+        (tmp_path / "settings.json").write_text("{}")
+        (tmp_path / "nvim").mkdir()
+        assert not looks_like_config_dir(tmp_path)
+
+    @pytest.mark.parametrize("marker", ["sops.yaml", "dotconfig.yaml"])
+    def test_marker_file(self, tmp_path, marker):
+        (tmp_path / marker).write_text("")
+        assert looks_like_config_dir(tmp_path)
+
+    @pytest.mark.parametrize("marker", ["keys", "local"])
+    def test_marker_dir(self, tmp_path, marker):
+        (tmp_path / marker).mkdir()
+        assert looks_like_config_dir(tmp_path)
+
+    @pytest.mark.parametrize("layer", ["public.env", "secrets.env"])
+    def test_deployment_dir(self, tmp_path, layer):
+        (tmp_path / "prod").mkdir()
+        (tmp_path / "prod" / layer).write_text("")
+        assert looks_like_config_dir(tmp_path)
+
+
+class TestDotConfigFallback:
+    @pytest.fixture(autouse=True)
+    def _repo(self, tmp_path, monkeypatch):
+        monkeypatch.delenv(ENV_VAR, raising=False)
+        (tmp_path / ".git").mkdir()
+
+    def test_fallback_name(self):
+        assert FALLBACK_NAME == ".config"
+
+    def test_uses_dotconfig_when_config_missing(self, tmp_path):
+        _make_config(tmp_path / ".config")
+        assert find_config_dir(tmp_path) == (tmp_path / ".config").resolve()
+
+    def test_uses_dotconfig_when_config_has_no_dotconfig_files(self, tmp_path):
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "webpack.js").write_text("")
+        _make_config(tmp_path / ".config")
+        assert find_config_dir(tmp_path) == (tmp_path / ".config").resolve()
+
+    def test_prefers_valid_config_over_dotconfig(self, tmp_path):
+        _make_config(tmp_path / "config")
+        _make_config(tmp_path / ".config")
+        assert find_config_dir(tmp_path) == (tmp_path / "config").resolve()
+
+    def test_ignores_dotconfig_without_dotconfig_files(self, tmp_path):
+        (tmp_path / ".config" / "nvim").mkdir(parents=True)
+        assert find_config_dir(tmp_path) is None
+
+    def test_empty_config_still_returned_when_nothing_valid(self, tmp_path):
+        (tmp_path / "config").mkdir()
+        (tmp_path / ".config" / "nvim").mkdir(parents=True)
+        assert find_config_dir(tmp_path) == (tmp_path / "config").resolve()
+
+    def test_walks_up_to_dotconfig(self, tmp_path):
+        _make_config(tmp_path / ".config")
+        sub = tmp_path / "src" / "app"
+        sub.mkdir(parents=True)
+        assert find_config_dir(sub) == (tmp_path / ".config").resolve()
+
+    def test_nearest_valid_level_wins(self, tmp_path):
+        _make_config(tmp_path / "config")
+        mid = tmp_path / "pkg"
+        _make_config(mid / ".config")
+        assert find_config_dir(mid) == (mid / ".config").resolve()
+
+    def test_env_var_disables_fallback(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(ENV_VAR, "cfg")
+        _make_config(tmp_path / ".config")
+        assert find_config_dir(tmp_path) is None
+
+
+class TestCliUsesFallback:
+    def test_load_finds_dotconfig(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from dotconfig.cli import cli
+
+        monkeypatch.delenv(ENV_VAR, raising=False)
+        monkeypatch.delenv("DOTCONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        _make_config(tmp_path / ".config")
+        result = CliRunner().invoke(cli, ["load", "dev", "-S"])
+        assert result.exit_code == 0, result.output
+        assert "A=1" in result.output
+
+    def test_load_file_default_output_under_dotconfig(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from dotconfig.cli import cli
+
+        monkeypatch.delenv(ENV_VAR, raising=False)
+        monkeypatch.delenv("DOTCONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        cfg = _make_config(tmp_path / ".config")
+        (cfg / "dev" / "app.yaml").write_text("x: 1\n")
+        result = CliRunner().invoke(cli, ["load", "dev", "--file", "app.yaml"])
+        assert result.exit_code == 0, result.output
+        assert (cfg / "files" / "app.yaml").read_text() == "x: 1\n"
+        assert not (tmp_path / "config").exists()

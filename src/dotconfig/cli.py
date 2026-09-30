@@ -150,6 +150,17 @@ def _resolve_config_dir(ctx: click.Context) -> Optional[Path]:
     return None
 
 
+def _config_dir(ctx: click.Context) -> Path:
+    """Config dir for a command: -c/DOTCONFIG_DIR, then discovery, then ./config.
+
+    Discovery walks up to the git root and falls back from ``config/`` to
+    ``.config/`` (see :func:`dotconfig.discover.find_config_dir`).
+    """
+    from .discover import find_config_dir
+
+    return _resolve_config_dir(ctx) or find_config_dir() or Path("config")
+
+
 @click.group()
 @click.version_option()
 @click.option(
@@ -448,7 +459,7 @@ def load(
     if to_stdout and not add_export and not no_export:
         no_export = True
 
-    cfg = _resolve_config_dir(ctx) or Path("config")
+    cfg = _config_dir(ctx)
 
     # ---- Resolve positional names vs legacy -d/-l flags ----
     if names and (deploy or local):
@@ -691,7 +702,7 @@ def save(
     if flat and not (use_json or use_yaml):
         raise click.UsageError("--flat requires --json or --yaml")
 
-    cfg = _resolve_config_dir(ctx) or Path("config")
+    cfg = _config_dir(ctx)
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
@@ -1202,7 +1213,7 @@ def gh_push_cmd(
         dotconfig gh-push -d prod --include-age-key
     """
     keys_filter = [k.strip() for k in keys_csv.split(",")] if keys_csv else None
-    cfg = _resolve_config_dir(ctx) or Path("config")
+    cfg = _config_dir(ctx)
     _gh_push(
         deployment=deploy,
         config_dir=cfg,
@@ -1333,7 +1344,7 @@ def version(ctx: click.Context) -> None:
     """
     if ctx.invoked_subcommand is None:
         import sys
-        cfg = _resolve_config_dir(ctx) or Path("config")
+        cfg = _config_dir(ctx)
         v = read_dotconfig_version(cfg)
         if v is None:
             click.echo("No version set. Run: dotconfig init", err=True)
@@ -1370,7 +1381,7 @@ def version_bump(ctx: click.Context, major: int, tag: bool, push: bool) -> None:
     import subprocess
     import sys
 
-    cfg = _resolve_config_dir(ctx) or Path("config")
+    cfg = _config_dir(ctx)
     project_root = Path.cwd()
 
     if push:
@@ -1440,7 +1451,7 @@ def version_load(ctx: click.Context) -> None:
         dotconfig version load
     """
     import sys
-    cfg = _resolve_config_dir(ctx) or Path("config")
+    cfg = _config_dir(ctx)
     project_root = Path.cwd()
     version = seed_version_from_sources(project_root)
     if version is None:
