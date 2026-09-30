@@ -1,12 +1,13 @@
 ---
 id: '002'
 title: dotconfig diff CLI command, exit codes, tests and README
-status: open
+status: done
 use-cases:
 - SUC-001
 - SUC-002
 - SUC-003
-depends-on: ['001']
+depends-on:
+- '001'
 github-issue: ''
 issue: dotconfig-diff-command.md
 completes_issue: true
@@ -22,13 +23,13 @@ Add the `diff` click command in `cli.py` mirroring `save`'s options: positional 
 
 ## Acceptance Criteria
 
-- [ ] `load` then `diff` exits 0, no output.
-- [ ] Edited public and secret value -> exit 1, both shown in unified diffs labeled with saved paths.
-- [ ] `diff <other-deploy>` compares against that deployment; `-d/-l` work.
-- [ ] `--file app.yaml -d dev`: same -> 0, changed -> 1; missing saved copy -> 1 (all added).
-- [ ] Missing deployment / no `.env` / decrypt failure -> exit 2.
-- [ ] Config dir contents unchanged after every diff run (read-only assertion).
-- [ ] README documents `diff`, exit codes, and the secrets-printed-to-stdout note.
+- [x] `load` then `diff` exits 0, no output.
+- [x] Edited public and secret value -> exit 1, both shown in unified diffs labeled with saved paths.
+- [x] `diff <other-deploy>` compares against that deployment; `-d/-l` work.
+- [x] `--file app.yaml -d dev`: same -> 0, changed -> 1; missing saved copy -> 1 (all added).
+- [x] Missing deployment / no `.env` / decrypt failure -> exit 2.
+- [x] Config dir contents unchanged after every diff run (read-only assertion).
+- [x] README documents `diff`, exit codes, and the secrets-printed-to-stdout note.
 
 ## Implementation Plan
 

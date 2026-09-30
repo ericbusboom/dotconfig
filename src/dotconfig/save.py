@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -68,6 +69,32 @@ _DETECT_SECRETS_SETTINGS = {
 
 
 _AGE_SECRET_KEY_RE = re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]{50,}")
+
+
+class SavePlanError(Exception):
+    """A user-facing error raised while planning a save (never sys.exit)."""
+
+
+@dataclass
+class PlannedWrite:
+    """One file ``save`` would write: where, what, and whether encrypted."""
+
+    label: str
+    dest: Path
+    content: str
+    encrypted: bool
+    note: str = ""
+    fail_messages: Tuple[str, ...] = ()
+
+
+@dataclass
+class SavePlan:
+    """The set of writes ``save`` would perform, without performing them."""
+
+    writes: List[PlannedWrite] = field(default_factory=list)
+    needs_unlock: bool = False
+    atomic: bool = False
+    notice: str = ""
 
 
 def _has_extra_secret_pattern(text: str) -> bool:
@@ -443,14 +470,14 @@ def parse_env_file(
     return deployment, local_name, sections
 
 
-def _write_with_split(
+def plan_write_with_split(
     data_content: str,
     dest: Path,
     filename: str,
     config_dir: Path,
     encrypt: bool,
-) -> None:
-    """Write a file, auto-splitting secrets for structured and .env files.
+) -> SavePlan:
+    """Plan how a file is written, auto-splitting secrets.
 
     For structured files (YAML/JSON): if 100% of leaves are secrets the
     whole file is encrypted.  Otherwise secret values are replaced with
@@ -462,21 +489,20 @@ def _write_with_split(
 
     If *encrypt* is True the main file is also SOPS-encrypted (overrides
     the split — the whole thing is encrypted).
+
+    Pure: performs no writes, encryption, or directory creation.
     """
-    sops_config = config_dir / "sops.yaml"
     suffix = Path(filename).suffix.lower()
-    companion_name = _secrets_companion(filename)
-    companion_path = dest.parent / companion_name
+    companion_path = dest.parent / _secrets_companion(filename)
+    plan = SavePlan(atomic=True)
 
     # --encrypt forces whole-file encryption, no split
     if encrypt:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if _encrypt_sops(data_content, dest, sops_config):
-            ok(f"→ {dest} 🔒")
-        else:
-            error(f"encryption failed for {dest}")
-            sys.exit(1)
-        return
+        plan.writes.append(PlannedWrite(
+            "file", dest, data_content, True,
+            fail_messages=(f"encryption failed for {dest}",),
+        ))
+        return plan
 
     if suffix in _STRUCTURED_SUFFIXES:
         data = _parse_structured(data_content, suffix)
@@ -484,67 +510,146 @@ def _write_with_split(
 
         if total > 0 and secret_count == total:
             # 100% secrets → encrypt whole file
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            if _encrypt_sops(data_content, dest, sops_config):
-                ok(f"→ {dest} 🔒 (all values are secrets)")
-            else:
-                error(f"encryption failed for {dest}")
-                sys.exit(1)
-            return
+            plan.writes.append(PlannedWrite(
+                "file", dest, data_content, True,
+                note="(all values are secrets)",
+                fail_messages=(f"encryption failed for {dest}",),
+            ))
+            return plan
 
         if secret_count > 0:
-            require_unlocked()
+            plan.needs_unlock = True
             public_data, secrets_data = _split_secrets(data)
-            # Write public file with REDACTED placeholders
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(_serialize_structured(public_data, suffix))
-            ok(f"→ {dest}")
-            # Write encrypted secrets companion
-            sec_content = _serialize_structured(secrets_data, suffix)
-            if _encrypt_sops(sec_content, companion_path, sops_config):
-                ok(f"→ {companion_path} 🔒")
-            else:
-                error(f"REFUSED: secrets detected but encryption failed for {companion_path}")
-                error("will not write secrets unencrypted — fix SOPS configuration")
-                # Remove the public file too — incomplete save is worse than no save
-                dest.unlink(missing_ok=True)
-                sys.exit(1)
-            return
+            plan.writes.append(PlannedWrite(
+                "file", dest, _serialize_structured(public_data, suffix), False,
+            ))
+            plan.writes.append(PlannedWrite(
+                "secrets", companion_path,
+                _serialize_structured(secrets_data, suffix), True,
+                fail_messages=_split_refused_messages(companion_path),
+            ))
+            return plan
 
     elif suffix in _ENV_SUFFIXES:
         pub_content, sec_content = _split_env_secrets(data_content)
         if sec_content:
-            require_unlocked()
-            # Write public file with REDACTED placeholders
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(pub_content)
-            ok(f"→ {dest}")
-            # Write encrypted secrets companion
-            if _encrypt_sops(sec_content, companion_path, sops_config):
-                ok(f"→ {companion_path} 🔒")
-            else:
-                error(f"REFUSED: secrets detected but encryption failed for {companion_path}")
-                error("will not write secrets unencrypted — fix SOPS configuration")
-                dest.unlink(missing_ok=True)
-                sys.exit(1)
-            return
+            plan.needs_unlock = True
+            plan.writes.append(PlannedWrite("file", dest, pub_content, False))
+            plan.writes.append(PlannedWrite(
+                "secrets", companion_path, sec_content, True,
+                fail_messages=_split_refused_messages(companion_path),
+            ))
+            return plan
 
     # For unrecognised formats, scan the raw content for secret patterns.
     # This catches things like private key files (-----BEGIN RSA PRIVATE KEY-----).
     if _content_has_secrets(data_content):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        if _encrypt_sops(data_content, dest, sops_config):
-            ok(f"→ {dest} 🔒 (secret content detected)")
-        else:
-            error(f"REFUSED: secret content detected but encryption failed for {dest}")
-            error("will not write secrets unencrypted — fix SOPS configuration")
-            sys.exit(1)
-        return
+        plan.writes.append(PlannedWrite(
+            "file", dest, data_content, True,
+            note="(secret content detected)",
+            fail_messages=(
+                f"REFUSED: secret content detected but encryption failed for {dest}",
+                "will not write secrets unencrypted — fix SOPS configuration",
+            ),
+        ))
+        return plan
 
     # No secrets found — write as-is
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(data_content)
-    ok(f"→ {dest}")
+    plan.writes.append(PlannedWrite("file", dest, data_content, False))
+    return plan
+
+
+def _split_refused_messages(companion_path: Path) -> Tuple[str, str]:
+    return (
+        f"REFUSED: secrets detected but encryption failed for {companion_path}",
+        "will not write secrets unencrypted — fix SOPS configuration",
+    )
+
+
+def _execute_file_plan(plan: SavePlan, config_dir: Path) -> None:
+    """Execute a file-mode plan (writes, encrypts, reports, exits on failure)."""
+    sops_config = config_dir / "sops.yaml"
+    if plan.needs_unlock:
+        require_unlocked()
+    written_plain: List[Path] = []
+    for w in plan.writes:
+        w.dest.parent.mkdir(parents=True, exist_ok=True)
+        suffix = (" 🔒" if w.encrypted else "") + (f" {w.note}" if w.note else "")
+        if not w.encrypted:
+            w.dest.write_text(w.content)
+            written_plain.append(w.dest)
+            ok(f"→ {w.dest}")
+        elif _encrypt_sops(w.content, w.dest, sops_config):
+            ok(f"→ {w.dest}{suffix}")
+        else:
+            for msg in w.fail_messages:
+                error(msg)
+            # Incomplete save is worse than no save
+            for p in written_plain:
+                p.unlink(missing_ok=True)
+            sys.exit(1)
+
+
+def plan_save_file(
+    deployment: Optional[str],
+    local: Optional[str],
+    filename: str,
+    config_dir: Path,
+    source: Optional[Path] = None,
+    encrypt: bool = False,
+) -> SavePlan:
+    """Plan the writes ``save_file`` would perform (no side effects).
+
+    Raises :class:`SavePlanError` on user-facing errors.  When there is
+    nothing to write (diff-save with no changes) the returned plan has no
+    writes and ``notice`` set.
+    """
+    if not deployment and not local:
+        raise SavePlanError("--deploy or --local is required with --file")
+
+    src = source if source else Path(filename)
+    if not src.exists():
+        raise SavePlanError(f"source file not found: {src}")
+
+    content = src.read_text()
+    suffix = Path(filename).suffix.lower()
+
+    if deployment and local:
+        # Diff-save mode: compare against existing deploy file,
+        # write only changed/added keys to local dir.
+        if suffix not in _STRUCTURED_SUFFIXES:
+            raise SavePlanError(
+                f"diff-save requires a structured file (.yaml, .yml, .json), got '{suffix}'"
+            )
+
+        from .load import _read_file_content
+        deploy_path = config_dir / deployment / filename
+        if not deploy_path.exists():
+            raise SavePlanError(
+                f"deployment file not found: {deploy_path} — save to deployment first"
+            )
+
+        sops_config = config_dir / "sops.yaml"
+        deploy_text = _read_file_content(deploy_path, sops_config)
+        deploy_data = _parse_structured(deploy_text, suffix)
+        source_data = _parse_structured(content, suffix)
+
+        diff = _dict_diff(deploy_data, source_data)
+        if not diff:
+            return SavePlan(
+                notice="no changes relative to deployment file — nothing to save"
+            )
+
+        dest = config_dir / "local" / local / filename
+        diff_content = _serialize_structured(diff, suffix)
+        return plan_write_with_split(diff_content, dest, filename, config_dir, encrypt)
+
+    # Single-target save
+    if local:
+        dest = config_dir / "local" / local / filename
+    else:
+        dest = config_dir / deployment / filename
+    return plan_write_with_split(content, dest, filename, config_dir, encrypt)
 
 
 def save_file(
@@ -569,53 +674,20 @@ def save_file(
     file and stored in a SOPS-encrypted companion.
 
     When *encrypt* is True the entire file is SOPS-encrypted.
+
+    What gets written where is decided by :func:`plan_save_file`; this
+    function executes that plan.
     """
-    if not deployment and not local:
-        error("--deploy or --local is required with --file")
+    try:
+        plan = plan_save_file(deployment, local, filename, config_dir, source, encrypt)
+    except SavePlanError as exc:
+        error(str(exc))
         sys.exit(1)
 
-    src = source if source else Path(filename)
-    if not src.exists():
-        error(f"source file not found: {src}")
-        sys.exit(1)
-
-    content = src.read_text()
-    suffix = Path(filename).suffix.lower()
-
-    if deployment and local:
-        # Diff-save mode: compare against existing deploy file,
-        # write only changed/added keys to local dir.
-        if suffix not in _STRUCTURED_SUFFIXES:
-            error(f"diff-save requires a structured file (.yaml, .yml, .json), got '{suffix}'")
-            sys.exit(1)
-
-        from .load import _read_file_content
-        deploy_path = config_dir / deployment / filename
-        if not deploy_path.exists():
-            error(f"deployment file not found: {deploy_path} — save to deployment first")
-            sys.exit(1)
-
-        sops_config = config_dir / "sops.yaml"
-        deploy_text = _read_file_content(deploy_path, sops_config)
-        deploy_data = _parse_structured(deploy_text, suffix)
-        source_data = _parse_structured(content, suffix)
-
-        diff = _dict_diff(deploy_data, source_data)
-        if not diff:
-            info("no changes relative to deployment file — nothing to save")
-            return
-
-        dest = config_dir / "local" / local / filename
-        diff_content = _serialize_structured(diff, suffix)
-        _write_with_split(diff_content, dest, filename, config_dir, encrypt)
-    else:
-        # Single-target save
-        if local:
-            dest = config_dir / "local" / local / filename
-        else:
-            dest = config_dir / deployment / filename
-
-        _write_with_split(content, dest, filename, config_dir, encrypt)
+    if plan.notice:
+        info(plan.notice)
+        return
+    _execute_file_plan(plan, config_dir)
 
 
 def _dict_to_env_lines(data: Dict[str, Any]) -> str:
@@ -626,12 +698,16 @@ def _dict_to_env_lines(data: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n" if lines else ""
 
 
-def _refuse_public_load(source: Path) -> None:
-    """Exit if *source* came from ``load --public`` (its secrets are blanks)."""
-    error(
+def _public_load_message(source: Path) -> str:
+    return (
         f"{source} was loaded with --public, so its secret values are blank; "
         "saving it would erase your secrets. Reload without --public, then save."
     )
+
+
+def _refuse_public_load(source: Path) -> None:
+    """Exit if *source* came from ``load --public`` (its secrets are blanks)."""
+    error(_public_load_message(source))
     sys.exit(1)
 
 
@@ -843,6 +919,176 @@ def _merge_section_bodies(bodies: list) -> str:
     return "\n".join(f"{k}={v}" for k, v in merged.items())
 
 
+def _detect_env_format(env_file: Path, fmt: str) -> str:
+    """Auto-detect format from file extension when *fmt* is the default."""
+    if fmt == "env":
+        suffix = env_file.suffix.lower()
+        if suffix == ".json":
+            return "json"
+        if suffix in (".yaml", ".yml"):
+            return "yaml"
+    return fmt
+
+
+def _single_override(value, kind: str) -> list:
+    names = _to_layer_list(value)
+    if len(names) > 1:
+        raise SavePlanError(f"save accepts at most one destination {kind} name")
+    return names
+
+
+def plan_save_config(
+    env_file: Path,
+    config_dir: Path,
+    override_deploy=None,
+    override_local=None,
+    fmt: str = "env",
+    add_export: bool = False,
+) -> SavePlan:
+    """Plan the writes ``save_config`` would perform for a ``.env`` file.
+
+    Pure with respect to the config directory: nothing is written,
+    encrypted, or created.  (The only side effect is exporting
+    ``SOPS_AGE_KEY_FILE`` from the .env into the process environment,
+    which ``save`` has always done before encrypting and which is needed
+    to decrypt the saved side when diffing.)
+
+    Raises :class:`SavePlanError` for user-facing errors (missing file,
+    not dotconfig-managed, too many overrides, unsupported format).
+    """
+    if not env_file.exists():
+        raise SavePlanError(f"{env_file} does not exist")
+
+    override_deploys = _single_override(override_deploy, "deployment")
+    override_locals = _single_override(override_local, "local")
+
+    if _detect_env_format(env_file, fmt) != "env":
+        raise SavePlanError(
+            f"{env_file}: only .env format is supported here (got JSON/YAML)"
+        )
+
+    content = env_file.read_text()
+
+    if PUBLIC_MARKER in content.splitlines():
+        raise SavePlanError(_public_load_message(env_file))
+
+    # Extract SOPS key path from the file itself before any section parsing
+    # so that sops can be invoked correctly when the variable is stored there.
+    for line in content.splitlines():
+        if line.startswith("SOPS_AGE_KEY_FILE="):
+            key_file = line.split("=", 1)[1].strip()
+            os.environ.setdefault("SOPS_AGE_KEY_FILE", key_file)
+            break
+
+    deployments, locals_, sections = _parse_env_layers(content)
+
+    if not deployments:
+        raise SavePlanError(
+            "CONFIG_DEPLOY not found in .env — is this a dotconfig-managed file?"
+        )
+
+    # Apply DEPLOYMENT= rewrite when the override changes the destination.
+    # Matches historical single-layer behavior (rewrites every section,
+    # including local ones) — extends naturally to multi-layer flatten.
+    if override_deploys and deployments != [override_deploys[0]]:
+        target = override_deploys[0]
+        for key in sections:
+            sections[key] = _rewrite_deployment(sections[key], target)
+
+    if add_export:
+        for key in sections:
+            sections[key] = _add_export_prefix(sections[key])
+
+    plan = SavePlan()
+    # Fail before any write if the key is locked and secrets will be encrypted.
+    plan.needs_unlock = any(
+        k.startswith("secrets") and v.strip() for k, v in sections.items()
+    )
+
+    def _public(label: str, path: Path, body: str) -> None:
+        plan.writes.append(
+            PlannedWrite(label, path, body + "\n" if body else "", False)
+        )
+
+    def _secret(label: str, path: Path, body: str, who: str) -> None:
+        plan.writes.append(
+            PlannedWrite(
+                label, path, body + "\n", True,
+                fail_messages=(who,),
+            )
+        )
+
+    # ---- Deployment sections ----
+    if override_deploys:
+        save_deploy = override_deploys[0]
+        public_body = _merge_section_bodies(
+            [sections.get(f"public ({d})", "") for d in deployments]
+        )
+        secrets_body = _merge_section_bodies(
+            [sections.get(f"secrets ({d})", "") for d in deployments]
+        )
+        if any(f"public ({d})" in sections for d in deployments):
+            _public("public config", config_dir / save_deploy / "public.env", public_body)
+        if secrets_body:
+            _secret(
+                "secrets 🔒", config_dir / save_deploy / "secrets.env",
+                secrets_body, f"could not encrypt secrets for {save_deploy}",
+            )
+    else:
+        for d in deployments:
+            public_key = f"public ({d})"
+            if public_key in sections:
+                _public("public config", config_dir / d / "public.env", sections[public_key])
+            body = sections.get(f"secrets ({d})")
+            if body:
+                _secret(
+                    "secrets 🔒", config_dir / d / "secrets.env", body,
+                    f"could not encrypt secrets for {d}",
+                )
+
+    # ---- Local sections ----
+    if locals_:
+        if override_locals:
+            save_local = override_locals[0]
+            public_body = _merge_section_bodies(
+                [sections.get(f"public-local ({l})", "") for l in locals_]
+            )
+            secrets_body = _merge_section_bodies(
+                [sections.get(f"secrets-local ({l})", "") for l in locals_]
+            )
+            if any(f"public-local ({l})" in sections for l in locals_):
+                _public(
+                    "public-local config",
+                    config_dir / "local" / save_local / "public.env",
+                    public_body,
+                )
+            if secrets_body:
+                _secret(
+                    "secrets-local 🔒",
+                    config_dir / "local" / save_local / "secrets.env",
+                    secrets_body,
+                    f"could not encrypt local secrets for {save_local}",
+                )
+        else:
+            for l in locals_:
+                local_key = f"public-local ({l})"
+                if local_key in sections:
+                    _public(
+                        "public-local config",
+                        config_dir / "local" / l / "public.env",
+                        sections[local_key],
+                    )
+                body = sections.get(f"secrets-local ({l})")
+                if body:
+                    _secret(
+                        "secrets-local 🔒",
+                        config_dir / "local" / l / "secrets.env",
+                        body, f"could not encrypt local secrets for {l}",
+                    )
+
+    return plan
+
+
 def save_config(
     env_file: Path,
     config_dir: Path,
@@ -877,29 +1123,22 @@ def save_config(
 
     If SOPS_AGE_KEY_FILE is found inside the .env, it is added to the
     current process environment before invoking sops.
+
+    What gets written where is decided by :func:`plan_save_config`; this
+    function executes that plan.
     """
     if not env_file.exists():
         error(f"{env_file} does not exist")
         sys.exit(1)
 
-    override_deploys = _to_layer_list(override_deploy)
-    override_locals = _to_layer_list(override_local)
-
-    if len(override_deploys) > 1:
-        error("save accepts at most one destination deployment name")
-        sys.exit(1)
-    if len(override_locals) > 1:
-        error("save accepts at most one destination local name")
+    try:
+        override_deploys = _single_override(override_deploy, "deployment")
+        override_locals = _single_override(override_local, "local")
+    except SavePlanError as exc:
+        error(str(exc))
         sys.exit(1)
 
-    # Auto-detect format from file extension when not explicitly set
-    if fmt == "env":
-        suffix = env_file.suffix.lower()
-        if suffix == ".json":
-            fmt = "json"
-        elif suffix in (".yaml", ".yml"):
-            fmt = "yaml"
-
+    fmt = _detect_env_format(env_file, fmt)
     if fmt != "env":
         _save_config_structured(
             env_file,
@@ -911,134 +1150,31 @@ def save_config(
         )
         return
 
-    content = env_file.read_text()
-
-    if PUBLIC_MARKER in content.splitlines():
-        _refuse_public_load(env_file)
-
-    # Extract SOPS key path from the file itself before any section parsing
-    # so that sops can be invoked correctly when the variable is stored there.
-    for line in content.splitlines():
-        if line.startswith("SOPS_AGE_KEY_FILE="):
-            key_file = line.split("=", 1)[1].strip()
-            os.environ.setdefault("SOPS_AGE_KEY_FILE", key_file)
-            break
-
-    deployments, locals_, sections = _parse_env_layers(content)
-
-    if not deployments:
-        error("CONFIG_DEPLOY not found in .env — is this a dotconfig-managed file?")
+    try:
+        plan = plan_save_config(
+            env_file, config_dir, override_deploy, override_local,
+            fmt, add_export,
+        )
+    except SavePlanError as exc:
+        error(str(exc))
         sys.exit(1)
-
-    # Apply DEPLOYMENT= rewrite when the override changes the destination.
-    # Matches historical single-layer behavior (rewrites every section,
-    # including local ones) — extends naturally to multi-layer flatten.
-    if override_deploys and deployments != [override_deploys[0]]:
-        target = override_deploys[0]
-        for key in sections:
-            sections[key] = _rewrite_deployment(sections[key], target)
-
-    if add_export:
-        for key in sections:
-            sections[key] = _add_export_prefix(sections[key])
 
     sops_config = config_dir / "sops.yaml"
     saved: list = []
 
-    # Fail before any write if the key is locked and secrets will be encrypted.
-    if any(k.startswith("secrets") and v.strip() for k, v in sections.items()):
+    if plan.needs_unlock:
         require_unlocked()
 
-    # ---- Deployment sections ----
-    if override_deploys:
-        save_deploy = override_deploys[0]
-        public_body = _merge_section_bodies(
-            [sections.get(f"public ({d})", "") for d in deployments]
-        )
-        secrets_body = _merge_section_bodies(
-            [sections.get(f"secrets ({d})", "") for d in deployments]
-        )
-        any_public = any(f"public ({d})" in sections for d in deployments)
-        if any_public:
-            public_file = config_dir / save_deploy / "public.env"
-            public_file.parent.mkdir(parents=True, exist_ok=True)
-            public_file.write_text(public_body + "\n" if public_body else "")
-            saved.append(("public config", str(public_file)))
-        if secrets_body:
-            secrets_file = config_dir / save_deploy / "secrets.env"
-            secrets_file.parent.mkdir(parents=True, exist_ok=True)
-            if _encrypt_sops(secrets_body + "\n", secrets_file, sops_config):
-                saved.append(("secrets 🔒", str(secrets_file)))
-            else:
-                warn(f"could not encrypt secrets for {save_deploy}")
-    else:
-        for d in deployments:
-            public_key = f"public ({d})"
-            if public_key in sections:
-                public_file = config_dir / d / "public.env"
-                public_file.parent.mkdir(parents=True, exist_ok=True)
-                body = sections[public_key]
-                public_file.write_text(body + "\n" if body else "")
-                saved.append(("public config", str(public_file)))
-            secrets_key = f"secrets ({d})"
-            if secrets_key in sections:
-                body = sections[secrets_key]
-                if body:
-                    secrets_file = config_dir / d / "secrets.env"
-                    secrets_file.parent.mkdir(parents=True, exist_ok=True)
-                    if _encrypt_sops(body + "\n", secrets_file, sops_config):
-                        saved.append(("secrets 🔒", str(secrets_file)))
-                    else:
-                        warn(f"could not encrypt secrets for {d}")
-
-    # ---- Local sections ----
-    if locals_:
-        if override_locals:
-            save_local = override_locals[0]
-            public_body = _merge_section_bodies(
-                [sections.get(f"public-local ({l})", "") for l in locals_]
-            )
-            secrets_body = _merge_section_bodies(
-                [sections.get(f"secrets-local ({l})", "") for l in locals_]
-            )
-            any_public = any(
-                f"public-local ({l})" in sections for l in locals_
-            )
-            if any_public:
-                local_file = config_dir / "local" / save_local / "public.env"
-                local_file.parent.mkdir(parents=True, exist_ok=True)
-                local_file.write_text(public_body + "\n" if public_body else "")
-                saved.append(("public-local config", str(local_file)))
-            if secrets_body:
-                secrets_local_file = (
-                    config_dir / "local" / save_local / "secrets.env"
-                )
-                secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
-                if _encrypt_sops(secrets_body + "\n", secrets_local_file, sops_config):
-                    saved.append(("secrets-local 🔒", str(secrets_local_file)))
-                else:
-                    warn(f"could not encrypt local secrets for {save_local}")
+    for w in plan.writes:
+        w.dest.parent.mkdir(parents=True, exist_ok=True)
+        if not w.encrypted:
+            w.dest.write_text(w.content)
+            saved.append((w.label, str(w.dest)))
+        elif _encrypt_sops(w.content, w.dest, sops_config):
+            saved.append((w.label, str(w.dest)))
         else:
-            for l in locals_:
-                local_key = f"public-local ({l})"
-                if local_key in sections:
-                    body = sections[local_key]
-                    local_file = config_dir / "local" / l / "public.env"
-                    local_file.parent.mkdir(parents=True, exist_ok=True)
-                    local_file.write_text(body + "\n" if body else "")
-                    saved.append(("public-local config", str(local_file)))
-                secrets_local_key = f"secrets-local ({l})"
-                if secrets_local_key in sections:
-                    body = sections[secrets_local_key]
-                    if body:
-                        secrets_local_file = (
-                            config_dir / "local" / l / "secrets.env"
-                        )
-                        secrets_local_file.parent.mkdir(parents=True, exist_ok=True)
-                        if _encrypt_sops(body + "\n", secrets_local_file, sops_config):
-                            saved.append(("secrets-local 🔒", str(secrets_local_file)))
-                        else:
-                            warn(f"could not encrypt local secrets for {l}")
+            for msg in w.fail_messages:
+                warn(msg)
 
     if saved:
         heading("💾 Saved:")

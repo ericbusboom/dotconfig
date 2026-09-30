@@ -55,6 +55,7 @@ from .key import (
     uninstall_key,
 )
 from .load import load_config, load_file
+from .diff import DiffError, compare_env, compare_file
 from .save import save_config, save_file
 from .versioning import read_dotconfig_version, bump_version, seed_version_from_sources, write_dotconfig_version
 from .event_hooks import run_hook
@@ -769,6 +770,126 @@ def save(
     if local:
         hook_args.append(local)
     run_hook(cfg, "save", hook_args)
+
+
+@cli.command()
+@click.argument("names", nargs=-1)
+@click.option(
+    "-d", "--deploy",
+    default=None,
+    help="Compare against this deployment (overrides the .env metadata).",
+)
+@click.option(
+    "-l", "--local",
+    default=None,
+    help="Compare against this local / developer name (overrides the "
+         ".env metadata).",
+)
+@click.option(
+    "--env-file",
+    default=".env",
+    show_default=True,
+    help=".env file to compare.",
+)
+@click.option(
+    "--file", "-f",
+    "filename",
+    default=None,
+    help="Compare a specific file (e.g. foobar.yaml) with its saved copy.",
+)
+@click.option(
+    "-n", "--name",
+    "dest_name",
+    default=None,
+    help="Saved filename inside the config tree. Defaults to the basename "
+         "of --file.",
+)
+@click.pass_context
+def diff(
+    ctx: click.Context,
+    names: Tuple[str, ...],
+    deploy: Optional[str],
+    local: Optional[str],
+    env_file: str,
+    filename: Optional[str],
+    dest_name: Optional[str],
+) -> None:
+    """Show what `dotconfig save` would change, without writing anything.
+
+    \b
+    Compares the .env (or --file) with the saved config files and prints
+    a unified diff to stdout. Read-only: no files are written and no
+    hooks run. Secret values ARE printed in the diff (secret files are
+    decrypted for comparison), so take care where the output goes.
+
+    \b
+    Exit status:
+      0  no differences
+      1  differences found
+      2  error (missing .env, missing deployment, decrypt failure, ...)
+
+    Example:
+
+    \b
+        dotconfig diff                     # .env vs its loaded layers
+        dotconfig diff prod                # .env vs config/prod/
+        dotconfig diff -d dev -l alice
+        dotconfig diff --file app.yaml -d dev
+    """
+    cfg = _config_dir(ctx)
+
+    if names and (deploy or local):
+        raise click.UsageError(
+            "cannot mix positional names with -d/--deploy or -l/--local; "
+            "use one form or the other"
+        )
+    if names:
+        deploy, local = _classify_save_args(names)
+    if dest_name and not filename:
+        raise click.UsageError("-n/--name can only be used with --file")
+
+    # Unlike save, diff never materializes anything: a named deployment or
+    # local that does not exist is an error, not "everything added".
+    for kind, value, path in (
+        ("deployment", deploy, cfg / (deploy or "")),
+        ("local", local, cfg / "local" / (local or "")),
+    ):
+        if value and not path.is_dir():
+            click.echo(f"Error: unknown {kind}: '{value}' ({path} does not exist)", err=True)
+            ctx.exit(2)
+
+    try:
+        if filename:
+            file_path = Path(filename).expanduser()
+            stored_name = Path(dest_name).name if dest_name else file_path.name
+            result = compare_file(
+                deployment=deploy,
+                local=local,
+                filename=stored_name,
+                config_dir=cfg,
+                source=file_path,
+            )
+        else:
+            result = compare_env(
+                env_file=Path(env_file),
+                config_dir=cfg,
+                override_deploy=deploy,
+                override_local=local,
+            )
+    except DiffError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        ctx.exit(2)
+    except SystemExit as exc:
+        # Shared helpers call sys.exit(1); that must not read as "differences".
+        if exc.code not in (0, None):
+            ctx.exit(2)
+        raise
+
+    if result.notice:
+        click.echo(result.notice, err=True)
+    if result.changed:
+        click.echo(result.text, nl=not result.text.endswith("\n"))
+        ctx.exit(1)
 
 
 @cli.group()

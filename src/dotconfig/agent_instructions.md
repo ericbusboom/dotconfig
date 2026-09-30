@@ -144,6 +144,23 @@ dotconfig save -d dev --file app.yaml           # store into config/dev/
 dotconfig save -l alice --file settings.json    # store into config/local/alice/
 ```
 
+### `dotconfig diff`
+
+```
+dotconfig diff [<deployment> [<local>]] [-d <deployment>] [-l <local>] [--file <name>] [--env-file .env]
+```
+
+Read-only preview of `dotconfig save`: prints a unified diff between the
+working `.env` (or `--file`) and the saved config files. No files are
+written and no hooks run. Secret values appear in the output. Exit code
+0 = no differences, 1 = differences, 2 = error.
+
+```bash
+dotconfig diff                                  # .env vs loaded layers
+dotconfig diff prod                             # .env vs config/prod/
+dotconfig diff -d dev --file app.yaml           # file vs config/dev/app.yaml
+```
+
 ### `dotconfig age status`
 
 ```

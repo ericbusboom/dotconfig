@@ -1,7 +1,7 @@
 ---
 id: '001'
 title: Extract pure save planners and add diff comparison core
-status: open
+status: done
 use-cases:
 - SUC-001
 - SUC-002
@@ -24,11 +24,11 @@ Add `src/dotconfig/diff.py`: given a plan, read each saved dest (missing -> empt
 
 ## Acceptance Criteria
 
-- [ ] Planners perform no writes, no encryption, no directory creation.
-- [ ] `save` behavior and output unchanged; all existing save/load tests pass untouched.
-- [ ] `diff.compare_env(...)` / `diff.compare_file(...)` return diff text + changed flag; missing saved file shows everything as added.
-- [ ] Secrets decrypted only in memory; no temp files written.
-- [ ] Unit tests for normalization (export prefix, whitespace) and missing-file case.
+- [x] Planners perform no writes, no encryption, no directory creation.
+- [x] `save` behavior and output unchanged; all existing save/load tests pass untouched.
+- [x] `diff.compare_env(...)` / `diff.compare_file(...)` return diff text + changed flag; missing saved file shows everything as added.
+- [x] Secrets decrypted only in memory; no temp files written.
+- [x] Unit tests for normalization (export prefix, whitespace) and missing-file case.
 
 ## Implementation Plan
 

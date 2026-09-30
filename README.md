@@ -24,6 +24,7 @@ overrides — and can round-trip it back.  It is designed for teams where:
 - [Commands](#commands)
   - [`dotconfig load`](#dotconfig-load)
   - [`dotconfig save`](#dotconfig-save)
+  - [`dotconfig diff`](#dotconfig-diff)
 - [SOPS integration](#sops-integration)
 - [Locking the age key](#locking-the-age-key-lock--unlock)
 - [Workflow](#workflow)
@@ -379,6 +380,48 @@ by `dotconfig load`) because it relies on the `CONFIG_DEPLOY` metadata
 comment to know where to write the files back.
 
 ---
+
+### `dotconfig diff`
+
+```
+Usage: dotconfig diff [OPTIONS] [NAMES]...
+
+  Show what `dotconfig save` would change, without writing anything.
+
+Options:
+  -d, --deploy TEXT   Compare against this deployment.
+  -l, --local TEXT    Compare against this local / developer name.
+  -f, --file TEXT     Compare a specific file with its saved copy.
+  -n, --name TEXT     Saved filename inside the config tree (with --file).
+  --env-file TEXT     .env file to compare.  [default: .env]
+  --config-dir TEXT   Root config directory.  [default: config]
+  --help              Show this message and exit.
+```
+
+Compares the working `.env` (or a single `--file`) with the saved config
+files and prints a unified diff to stdout. It is read-only: nothing is
+written and no event hooks run. Positional names work like `save`
+(`dotconfig diff prod`, `dotconfig diff dev alice`); `-d`/`-l` are the
+flag form (don't mix the two). Secret files are decrypted in memory for
+the comparison, so **secret values are printed to stdout** in the diff;
+mind where the output goes (terminal scrollback, CI logs, pipes).
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | No differences |
+| 1 | Differences found (diff printed to stdout) |
+| 2 | Error: missing or unmanaged `.env`, unknown deployment/local, missing `--file` source, decrypt failure |
+
+```bash
+dotconfig diff                        # .env vs the layers it was loaded from
+dotconfig diff prod                   # .env vs config/prod/
+dotconfig diff -d dev --file app.yaml # app.yaml vs config/dev/app.yaml
+dotconfig diff > /dev/null && echo "clean"
+```
+
+A saved file that does not exist yet shows as entirely added (exit 1).
 
 ## SOPS integration
 
