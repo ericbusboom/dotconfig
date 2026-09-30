@@ -1,7 +1,7 @@
 ---
 id: '002'
 title: Write decrypted secret files with mode 0600 atomically
-status: in-progress
+status: done
 use-cases:
 - SUC-002
 depends-on: []
@@ -19,10 +19,10 @@ completes_issue: true
 
 ## Acceptance Criteria
 
-- [ ] Mode 0600 after `load`, `load --split` (.env and .env.secret), `load --public`, and `key load`
-- [ ] Existing 0644 `.env` is 0600 after `load`, with a message saying it was tightened
-- [ ] Writes are atomic (temp file + rename in same dir)
-- [ ] Tests for all paths
+- [x] Mode 0600 after `load`, `load --split` (.env and .env.secret), `load --public`, and `key load`
+- [x] Existing 0644 `.env` is 0600 after `load`, with a message saying it was tightened
+- [x] Writes are atomic (temp file + rename in same dir)
+- [x] Tests for all paths
 
 ## Implementation Plan
 
