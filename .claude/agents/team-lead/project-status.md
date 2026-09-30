@@ -16,10 +16,11 @@ stands and what should happen next.
 
 1. **Check artifacts**: Verify which SE documents exist:
    - `.clasi/brief.md`
-   - `.clasi/design/usecases.md`
-   - `.clasi/architecture/` (versioned architecture documents)
-2. **Check sprints**: Scan `.clasi/sprints/` for active sprints and
-   `.clasi/sprints/done/` for completed sprints.
+   - `usecases.md` in the project's configured design directory
+     (`paths.design` in `.clasi/config.yaml`, default `docs/design/`)
+   - `docs/architecture/` (versioned architecture documents)
+2. **Check sprints**: Scan `clasi/sprints/` for active sprints and
+   `clasi/sprints/done/` for completed sprints.
 3. **Scan tickets**: For each active sprint, read ticket files in the
    sprint's `tickets/` and `tickets/done/` directories. Extract frontmatter
    status for each.

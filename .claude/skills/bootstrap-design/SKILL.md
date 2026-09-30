@@ -1,0 +1,1 @@
+/Volumes/Proj/proj/code-projects/dotconfig/.agents/skills/bootstrap-design/SKILL.md

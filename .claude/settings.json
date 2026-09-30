@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook status-inject"
+            "command": "clasi hook status-inject",
+            "timeout": 10
           }
         ]
       }
@@ -17,7 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook subagent-start"
+            "command": "clasi hook subagent-start",
+            "timeout": 10
           }
         ]
       }
@@ -28,7 +30,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook subagent-stop"
+            "command": "clasi hook subagent-stop",
+            "timeout": 15
           }
         ]
       }
@@ -61,36 +64,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook role-guard"
+            "command": "clasi hook role-guard",
+            "timeout": 5
           }
         ]
       },
       {
-        "matcher": "mcp__clasi__create_ticket|mcp__clasi__create_sprint",
+        "matcher": "mcp__clasi__create_ticket",
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook mcp-guard"
+            "command": "clasi hook mcp-guard",
+            "timeout": 5
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "clasi hook commit-check"
-          }
-        ]
-      },
-      {
         "matcher": "ExitPlanMode",
         "hooks": [
           {
             "type": "command",
-            "command": "clasi hook plan-to-issue"
+            "command": "clasi hook plan-to-issue",
+            "timeout": 10
           }
         ]
       }
