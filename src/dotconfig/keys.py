@@ -68,7 +68,8 @@ def _show_lock_state() -> None:
             item(f"  {m.kind}{label} — {when_txt}")
 
     if os.environ.get("SOPS_AGE_KEY"):
-        warn(keywrap.SOPS_AGE_KEY_LOCK_WARNING)
+        warn(keywrap.SOPS_AGE_KEY_LOCK_WARNING if state == "locked"
+             else keywrap.SOPS_AGE_KEY_NEUTRAL_WARNING)
 
 
 def show_keys() -> None:

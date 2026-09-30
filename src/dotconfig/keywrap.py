@@ -583,6 +583,11 @@ SOPS_AGE_KEY_LOCK_WARNING = (
     "children can still decrypt. Unset it and use SOPS_AGE_KEY_FILE instead."
 )
 
+SOPS_AGE_KEY_NEUTRAL_WARNING = (
+    "SOPS_AGE_KEY is set in the environment. It survives 'dotconfig age "
+    "lock' and defeats locking; unset it and use SOPS_AGE_KEY_FILE instead."
+)
+
 
 def lock_problems(secret_pub: Optional[str]) -> list[str]:
     """Reasons it is unsafe to delete the plain key (empty list means safe)."""

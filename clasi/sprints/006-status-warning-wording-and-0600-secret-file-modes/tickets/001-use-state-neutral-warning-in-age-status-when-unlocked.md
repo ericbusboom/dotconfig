@@ -1,8 +1,9 @@
 ---
 id: '001'
 title: Use state-neutral warning in age status when unlocked
-status: open
-use-cases: [SUC-001]
+status: done
+use-cases:
+- SUC-001
 depends-on: []
 github-issue: ''
 issue: age-status-lock-warning-wording.md
@@ -18,10 +19,10 @@ completes_issue: true
 
 ## Acceptance Criteria
 
-- [ ] `status` unlocked + SOPS_AGE_KEY set shows neutral wording, not "locked, but"
-- [ ] `status` locked + SOPS_AGE_KEY set shows "locked, but..."
-- [ ] `lock` wording unchanged
-- [ ] Tests cover both status states
+- [x] `status` unlocked + SOPS_AGE_KEY set shows neutral wording, not "locked, but"
+- [x] `status` locked + SOPS_AGE_KEY set shows "locked, but..."
+- [x] `lock` wording unchanged
+- [x] Tests cover both status states
 
 ## Implementation Plan
 
