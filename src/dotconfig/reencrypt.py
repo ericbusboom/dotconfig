@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .load import _decrypt_sops, _is_sops_encrypted
+from .keyguard import require_unlocked
 from .output import created, error, heading, info, ok
 from .save import _encrypt_sops
 
@@ -37,6 +38,7 @@ def reencrypt_all(config_dir: Path) -> None:
         info(f"no SOPS-encrypted files found under {config_dir}")
         return
 
+    require_unlocked()
     heading(f"Re-encrypting {len(encrypted)} file(s) under {config_dir}")
     for path in encrypted:
         rel = path.relative_to(config_dir)

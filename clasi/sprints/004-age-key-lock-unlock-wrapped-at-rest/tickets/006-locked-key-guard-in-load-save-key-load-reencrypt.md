@@ -1,9 +1,12 @@
 ---
 id: '006'
 title: Locked-key guard in load, save, key load, reencrypt
-status: open
-use-cases: ["SUC-006"]
-depends-on: ["001", "003"]
+status: done
+use-cases:
+- SUC-006
+depends-on:
+- '001'
+- '003'
 github-issue: ''
 issue: age-key-lock-unlock.md
 completes_issue: true
@@ -18,11 +21,11 @@ New leaf module `keyguard.py` with `require_unlocked()`: detects 'plain key miss
 
 ## Acceptance Criteria
 
-- [ ] Locked + non-interactive: exact message, exit code 75, sops never invoked
-- [ ] Locked + TTY: prompt to unlock inline; on success the command proceeds, on decline exits 75
-- [ ] Unlocked, not wrapped (no sidecar), or `SOPS_AGE_KEY` set: no behavior change
-- [ ] `keyguard` imports only `keystore`/`output` (no import cycle with load/save)
-- [ ] Guard wired into load, save, key load/get, reencrypt; commands that don't touch sops are unaffected
+- [x] Locked + non-interactive: exact message, exit code 75, sops never invoked
+- [x] Locked + TTY: prompt to unlock inline; on success the command proceeds, on decline exits 75
+- [x] Unlocked, not wrapped (no sidecar), or `SOPS_AGE_KEY` set: no behavior change
+- [x] `keyguard` imports only `keystore`/`output` (no import cycle with load/save)
+- [x] Guard wired into load, save, key load/get, reencrypt; commands that don't touch sops are unaffected
 
 ## Testing
 

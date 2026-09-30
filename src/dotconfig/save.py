@@ -22,6 +22,7 @@ import yaml
 
 from .audit import _key_looks_secret
 from .load import _add_export_prefix, _env_lines_to_dict
+from .keyguard import require_unlocked
 from .output import error, heading, info, ok, warn
 
 
@@ -293,6 +294,7 @@ def _encrypt_sops(
     If the creation rules don't match the filename, falls back to
     passing the age recipient key directly via ``--age``.
     """
+    require_unlocked()
     try:
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)

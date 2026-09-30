@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import click
 import yaml
 
+from .keyguard import require_unlocked
 from .output import error, ok, warn
 from .versioning import load_dotconfig_yaml
 
@@ -199,6 +200,7 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
     the store format is detected from the file content and passed via
     ``--input-type`` / ``--output-type`` so sops doesn't default to JSON.
     """
+    require_unlocked()
     try:
         cmd = ["sops"]
         if sops_config is not None and sops_config.exists():
