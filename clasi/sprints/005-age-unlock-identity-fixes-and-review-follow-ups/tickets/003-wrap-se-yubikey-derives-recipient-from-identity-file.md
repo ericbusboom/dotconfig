@@ -1,9 +1,11 @@
 ---
 id: '003'
 title: wrap --se/--yubikey derives recipient from identity file
-status: open
-use-cases: [SUC-003]
-depends-on: ['001']
+status: done
+use-cases:
+- SUC-003
+depends-on:
+- '001'
 github-issue: ''
 issue: age-unlock-identity-review-findings.md
 completes_issue: true
@@ -18,11 +20,11 @@ Finding 3. `wrap --se --se-identity FILE` with no sidecar and no `--se-recipient
 
 ## Acceptance Criteria
 
-- [ ] `wrap --se --se-identity FILE` works with no sidecar and no --se-recipient, using the derived recipient
-- [ ] `--yubikey` equivalent works, or is explicitly recorded as deferred in the ticket
-- [ ] Explicit --se-recipient overrides derivation
-- [ ] Clear error if recipient cannot be derived
-- [ ] Tests use fake runner / conftest isolation; real key untouched
+- [x] `wrap --se --se-identity FILE` works with no sidecar and no --se-recipient, using the derived recipient
+- [x] `--yubikey` equivalent works, or is explicitly recorded as deferred in the ticket
+- [x] Explicit --se-recipient overrides derivation
+- [x] Clear error if recipient cannot be derived
+- [x] Tests use fake runner / conftest isolation; real key untouched
 
 ## Testing
 

@@ -100,10 +100,13 @@ def build_specs(
 
     def recipient_method(kind, rec, ident, default_label):
         rec = rec or (existing.get(kind) or {}).get("recipient")
+        if not rec and ident is not None:
+            rec = keystore.derive_plugin_recipient(kind, Path(ident))
         if not rec:
             raise WrapError(
                 f"--{kind} needs the plugin recipient: pass --{kind}-recipient "
-                f"age1... (create one with the age plugin first)"
+                f"age1... (none is recorded, and it could not be derived from "
+                f"a --{kind}-identity file)"
             )
         if ident is None:
             raise WrapError(

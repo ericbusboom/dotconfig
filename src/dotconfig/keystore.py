@@ -305,6 +305,39 @@ def age_public_keys_of_identity(identity_bytes: bytes) -> list[str]:
     return [l.strip() for l in out.decode().splitlines() if l.strip()]
 
 
+_RECIPIENT_PREFIX = {"se": "age1se1", "yubikey": "age1yubikey1"}
+
+
+def derive_plugin_recipient(kind: str, identity_file: Path) -> Optional[str]:
+    """Recipient for a plugin identity file (``kind`` is ``se`` or ``yubikey``).
+
+    Secure Enclave: ``age-plugin-se recipients -i FILE``, falling back to the
+    ``# public key:`` comment.  YubiKey: the ``# Recipient:`` / ``# public key:``
+    comment only (age-plugin-yubikey has no per-file query).  Returns None when
+    nothing usable is found."""
+    prefix = _RECIPIENT_PREFIX[kind]
+    if kind == "se":
+        try:
+            out = _run(["age-plugin-se", "recipients", "-i", str(identity_file)])
+            for line in out.decode(errors="replace").splitlines():
+                if line.strip().startswith(prefix):
+                    return line.strip()
+        except AgeToolError:
+            pass
+    try:
+        text = Path(identity_file).read_text(errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("#") and ":" in line:
+            key, _, value = line.lstrip("#").partition(":")
+            if key.strip().lower() in ("public key", "recipient") and \
+                    value.strip().startswith(prefix):
+                return value.strip()
+    return None
+
+
 def age_decrypt_with_identity_bytes(
     wrapped: Path, identity_bytes: bytes, interactive: bool = False
 ) -> bytes:
