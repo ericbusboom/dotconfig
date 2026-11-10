@@ -448,6 +448,12 @@ class TestLoadConfigSopsConfig:
 # ---------------------------------------------------------------------------
 
 class TestIsSopsEncrypted:
+    def test_binary_file_not_detected(self, tmp_path):
+        # e.g. a macOS .DS_Store — must not raise UnicodeDecodeError
+        f = tmp_path / ".DS_Store"
+        f.write_bytes(b"\x00\x00\x00\x01Bud1\x97\xff\xfe" * 4)
+        assert _is_sops_encrypted(f) is False
+
     def test_plain_yaml_not_detected(self, tmp_path):
         f = tmp_path / "app.yaml"
         f.write_text("database:\n  host: localhost\n")

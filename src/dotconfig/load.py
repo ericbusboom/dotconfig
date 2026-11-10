@@ -134,8 +134,10 @@ def _is_sops_encrypted(filepath: Path) -> bool:
     marker as a fallback — sops always wraps encrypted leaves in it.
     """
     try:
-        text = filepath.read_text()
-    except OSError:
+        text = filepath.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Unreadable or binary (non-UTF-8) files — e.g. .DS_Store — can't be
+        # sops output, which is always UTF-8 text.
         return False
     # JSON / YAML: top-level "sops" key written by sops
     if '"sops"' in text or "\nsops:\n" in text or text.startswith("sops:\n"):
