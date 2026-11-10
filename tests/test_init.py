@@ -21,6 +21,7 @@ from dotconfig.init import (
     _is_age_installed,
     _read_key_from_file,
     _render_sops_yaml,
+    _update_gitattributes,
     _update_gitignore,
     _update_sops_yaml,
     _write_agents_md,
@@ -547,6 +548,30 @@ class TestWriteAgentsMd:
         _write_agents_md(tmp_path)
         out = capsys.readouterr().out
         assert "~" in out
+
+
+# ---------------------------------------------------------------------------
+# _update_gitattributes
+# ---------------------------------------------------------------------------
+
+class TestUpdateGitattributes:
+    def test_creates_when_missing(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        _update_gitattributes(config_dir, quiet=True)
+        lines = (tmp_path / ".gitattributes").read_text().splitlines()
+        assert "config/** text eol=lf" in lines
+
+    def test_appends_and_is_idempotent(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        ga = tmp_path / ".gitattributes"
+        ga.write_text("*.png binary")
+        _update_gitattributes(config_dir, quiet=True)
+        _update_gitattributes(config_dir, quiet=True)
+        text = ga.read_text()
+        assert text.startswith("*.png binary\n")
+        assert text.count("config/** text eol=lf") == 1
 
 
 # ---------------------------------------------------------------------------

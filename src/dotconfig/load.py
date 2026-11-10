@@ -12,8 +12,10 @@ optionally deep-merged with a local override layer.
 import base64
 import json
 import re
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -139,6 +141,8 @@ def _is_sops_encrypted(filepath: Path) -> bool:
         # Unreadable or binary (non-UTF-8) files — e.g. .DS_Store — can't be
         # sops output, which is always UTF-8 text.
         return False
+    # Windows checkouts with core.autocrlf may have converted LF to CRLF.
+    text = text.replace("\r\n", "\n")
     # JSON / YAML: top-level "sops" key written by sops
     if '"sops"' in text or "\nsops:\n" in text or text.startswith("sops:\n"):
         return True
@@ -204,17 +208,37 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
     ``--input-type`` / ``--output-type`` so sops doesn't default to JSON.
     """
     require_unlocked()
+    tmp_path: Optional[str] = None
     try:
         cmd = ["sops"]
         if sops_config is not None and sops_config.exists():
             cmd += ["--config", str(sops_config)]
+
+        target = str(filepath)
         try:
-            fmt = _detect_sops_format(filepath.read_text())
+            raw = filepath.read_bytes()
         except OSError:
-            fmt = None
+            raw = None
+        fmt = None
+        if raw is not None:
+            # Git on Windows (core.autocrlf=true) checks files out with CRLF
+            # line endings. sops' dotenv/ini parsers then choke on the
+            # trailing "\r" (e.g. 'parsing time "...Z\r": extra text').
+            # sops always writes LF, so normalising restores the original
+            # bytes; decrypt a normalised temp copy instead.
+            if b"\r\n" in raw:
+                raw = raw.replace(b"\r\n", b"\n")
+                fd, tmp_path = tempfile.mkstemp(suffix=filepath.suffix)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(raw)
+                target = tmp_path
+            try:
+                fmt = _detect_sops_format(raw.decode("utf-8"))
+            except UnicodeDecodeError:
+                fmt = None
         if fmt:
             cmd += ["--input-type", fmt, "--output-type", fmt]
-        cmd += ["--decrypt", str(filepath)]
+        cmd += ["--decrypt", target]
 
         result = subprocess.run(
             cmd,
@@ -229,6 +253,12 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
     except subprocess.CalledProcessError as e:
         warn(f"sops decryption failed for {filepath}: {e.stderr.strip()}")
         return None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 def _secrets_companion(filename: str) -> str:

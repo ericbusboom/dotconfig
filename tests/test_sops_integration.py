@@ -288,3 +288,34 @@ class TestRealSopsDiffSave:
         assert "Abc123Def456Ghi" in data["api"]["secret_key"]
         # Preserved from base (not in diff, so comes from deploy)
         # (api.host and api.port were overridden, but base had no other keys to test)
+
+
+# ---------------------------------------------------------------------------
+# Windows CRLF checkouts (git core.autocrlf=true)
+# ---------------------------------------------------------------------------
+
+
+class TestCrlfCheckout:
+    @pytest.mark.parametrize("name,plain", [
+        ("crlf.secrets.env", "API_KEY=s3cret\nDB_PASS=hunter2\n"),
+        ("crlf.secrets.yaml", "api_key: s3cret\ndb_pass: hunter2\n"),
+    ])
+    def test_decrypts_after_lf_to_crlf_conversion(self, sops_env, name, plain):
+        from dotconfig.load import _decrypt_sops
+
+        f = sops_env / name
+        f.write_text(plain)
+        subprocess.run(
+            ["sops", "--config", str(sops_env / "sops.yaml"),
+             "--encrypt", "--in-place", str(f)],
+            capture_output=True, text=True, check=True,
+        )
+        # Simulate a Windows checkout converting LF -> CRLF
+        f.write_bytes(f.read_bytes().replace(b"\n", b"\r\n"))
+
+        assert _is_sops_encrypted(f)
+        out = _decrypt_sops(f, sops_env / "sops.yaml")
+        assert out is not None
+        assert "s3cret" in out and "hunter2" in out
+        # The on-disk file is left untouched
+        assert b"\r\n" in f.read_bytes()

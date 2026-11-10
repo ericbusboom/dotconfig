@@ -369,6 +369,33 @@ def _update_gitignore(config_dir: Path, quiet: bool = False) -> None:
             created(str(gitignore))
 
 
+def _update_gitattributes(config_dir: Path, quiet: bool = False) -> None:
+    """Pin LF line endings for the config directory in ``.gitattributes``.
+
+    Git on Windows (``core.autocrlf=true``) otherwise checks files out with
+    CRLF, which breaks sops decryption of dotenv/ini files.
+    """
+    gitattributes = config_dir.parent / ".gitattributes"
+    line = f"{config_dir.name}/** text eol=lf"
+    header = "# dotconfig — sops files must keep LF line endings (Windows checkouts)"
+
+    if gitattributes.exists():
+        existing = gitattributes.read_text()
+        if line in existing.splitlines():
+            if not quiet:
+                ok(str(gitattributes))
+            return
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        gitattributes.write_text(existing + header + "\n" + line + "\n")
+        if not quiet:
+            updated(str(gitattributes))
+    else:
+        gitattributes.write_text(header + "\n" + line + "\n")
+        if not quiet:
+            created(str(gitattributes))
+
+
 def _write_agents_md(config_dir: Path, quiet: bool = False) -> None:
     """Write an AGENTS.md file into *config_dir* explaining dotconfig usage.
 
@@ -542,6 +569,7 @@ def init_config(config_dir: Path, quiet: bool = False) -> None:
     if not quiet:
         heading("📝 Updating .gitignore:")
     _update_gitignore(config_dir, quiet=quiet)
+    _update_gitattributes(config_dir, quiet=quiet)
 
     # ---- Key setup --------------------------------------------------------
     if not quiet:
