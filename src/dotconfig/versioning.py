@@ -426,6 +426,15 @@ def _file_type_for(path: Path) -> str:
     raise ValueError(f"Unknown version file type for {name}")
 
 
+class NoVersionField(ValueError):
+    """A sync-target file exists but carries no version field.
+
+    Common for npm workspace roots (``"private": true``, no ``version``)
+    and pyproject files using ``dynamic = ["version"]``. ``bump_version``
+    skips such files instead of failing.
+    """
+
+
 def update_pyproject_version(version: str, pyproject_path: Path) -> None:
     """Update the version field in pyproject.toml.
 
@@ -436,7 +445,7 @@ def update_pyproject_version(version: str, pyproject_path: Path) -> None:
     content = pyproject_path.read_text(encoding="utf-8")
     pattern = re.compile(r'^version\s*=\s*"[^"]*"', re.MULTILINE)
     if not pattern.search(content):
-        raise ValueError(f"Could not find version field in {pyproject_path}")
+        raise NoVersionField(f"Could not find version field in {pyproject_path}")
     updated = pattern.sub(f'version = "{version}"', content, count=1)
     if updated != content:
         pyproject_path.write_text(updated, encoding="utf-8")
@@ -452,7 +461,7 @@ def update_package_json_version(version: str, package_path: Path) -> None:
     content = package_path.read_text(encoding="utf-8")
     data = json.loads(content)
     if "version" not in data:
-        raise ValueError(f"No 'version' field in {package_path}")
+        raise NoVersionField(f"No 'version' field in {package_path}")
     data["version"] = version
     package_path.write_text(
         json.dumps(data, indent=2) + "\n", encoding="utf-8"
@@ -537,7 +546,10 @@ def bump_version(
     for filename, file_type in _VERSION_FILES:
         path = project_root / filename
         if path.exists():
-            update_version_file(path, file_type, version)
+            try:
+                update_version_file(path, file_type, version)
+            except NoVersionField:
+                continue  # e.g. private npm workspace root — nothing to sync
             synced.append(filename)
 
     # Sync extra files from version_sync setting

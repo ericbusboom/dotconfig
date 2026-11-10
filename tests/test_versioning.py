@@ -516,3 +516,19 @@ class TestSeedVersionFromSources:
             encoding="utf-8",
         )
         assert seed_version_from_sources(tmp_path) is None
+
+
+class TestBumpSkipsFilesWithoutVersion:
+    def test_package_json_without_version_is_skipped(self, tmp_path):
+        from dotconfig.versioning import bump_version
+
+        (tmp_path / "config").mkdir()
+        pkg = tmp_path / "package.json"
+        original = json.dumps({"name": "ws-root", "private": True}, indent=2) + "\n"
+        pkg.write_text(original)
+
+        result = bump_version(project_root=tmp_path, run_hooks=False)
+
+        assert pkg.read_text() == original
+        assert "package.json" not in result["synced"]
+        assert result["version"]
