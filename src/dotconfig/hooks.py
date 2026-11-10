@@ -1,6 +1,7 @@
 """Install git hooks for dotconfig."""
 
 import stat
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +34,23 @@ def install_pre_commit_hook(start: Optional[Path] = None) -> bool:
         error("not inside a git repository")
         return False
 
-    hooks_dir = root / ".git" / "hooks"
+    # Use `git rev-parse --git-dir` so submodule checkouts (where .git is a
+    # file, not a directory) resolve to the real git object store path.
+    try:
+        git_dir = Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=str(start),
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        )
+        if not git_dir.is_absolute():
+            git_dir = (start / git_dir).resolve()
+    except subprocess.CalledProcessError:
+        git_dir = root / ".git"
+
+    hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     hook_file = hooks_dir / "pre-commit"
 
