@@ -1,7 +1,7 @@
 ---
 id: '003'
 title: Label-aware sops.yaml parse and key_groups render
-status: open
+status: in-progress
 use-cases:
 - SUC-004
 depends-on:
