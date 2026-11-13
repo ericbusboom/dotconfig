@@ -1,7 +1,7 @@
 ---
 id: '004'
 title: 'init integration: user config, merged labeled keys, reencrypt notice'
-status: in-progress
+status: done
 use-cases:
 - SUC-003
 - SUC-004
@@ -24,14 +24,14 @@ Integrate into init_config/_update_sops_yaml: after deriving the local public ke
 
 ## Acceptance Criteria
 
-- [ ] Missing user config is created, seeded with the local key labeled <user>@<hostname>, and init tells the user the path
-- [ ] All listed keys appear in sops.yaml with labels; the local key is always present
-- [ ] Rerun is a no-op (file untouched, reports up to date) and re-adds a key that was removed from sops.yaml
-- [ ] Existing recipients and their labels are never removed
-- [ ] Invalid user-config entries are skipped with a warning and do not break init
-- [ ] When recipients changed and encrypted files exist, output tells the user to run `dotconfig reencrypt`; nothing is re-encrypted
-- [ ] --quiet suppresses messages but still does the work
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] Missing user config is created, seeded with the local key labeled <user>@<hostname>, and init tells the user the path
+- [x] All listed keys appear in sops.yaml with labels; the local key is always present
+- [x] Rerun is a no-op (file untouched, reports up to date) and re-adds a key that was removed from sops.yaml
+- [x] Existing recipients and their labels are never removed
+- [x] Invalid user-config entries are skipped with a warning and do not break init
+- [x] When recipients changed and encrypted files exist, output tells the user to run `dotconfig reencrypt`; nothing is re-encrypted
+- [x] --quiet suppresses messages but still does the work
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 

@@ -282,47 +282,75 @@ def _render_sops_yaml(age_keys: List[Union[str, KeyEntry]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _update_sops_yaml(config_dir: Path, public_key: str, quiet: bool = False) -> None:
-    """Create or refresh ``sops.yaml`` in *config_dir* with *public_key*.
+def _has_encrypted_files(config_dir: Path) -> bool:
+    """Return True if any file under *config_dir* is SOPS-encrypted."""
+    from .load import _is_sops_encrypted
 
-    Always rewrites the file in canonical two-rule form (a no-op
-    ``public.env`` rule plus a ``.+`` catch-all). Existing age recipients
-    from any prior rule layout are collected into the catch-all so keys
-    are never lost across init runs. If the canonical content is already
-    on disk, the file is left untouched (preserving mtime).
+    for p in sorted(config_dir.rglob("*")):
+        if p.name == "sops.yaml" or not p.is_file():
+            continue
+        if _is_sops_encrypted(p):
+            return True
+    return False
+
+
+def _short(key: str) -> str:
+    return key if len(key) <= 20 else f"{key[:12]}...{key[-6:]}"
+
+
+def _describe(key: str, label: Optional[str]) -> str:
+    return f"{label} ({_short(key)})" if label else _short(key)
+
+
+def _update_sops_yaml(
+    config_dir: Path,
+    public_key: str,
+    quiet: bool = False,
+    extra_keys: Optional[List[KeyEntry]] = None,
+) -> bool:
+    """Create or refresh ``sops.yaml`` in *config_dir*.
+
+    The local *public_key* and every entry in *extra_keys* (the user
+    config's labeled keys) are merged into the existing recipients.
+    Existing keys and labels are never removed; where both sides carry a
+    label the supplied (user config) label wins. The file is always
+    rewritten in canonical ``key_groups`` form, but if the canonical
+    content is already on disk it is left untouched.
+
+    Returns True if the set of recipient keys changed (a key was added), so
+    the caller can tell the user to re-encrypt. Label-only changes return
+    False.
     """
     sops_yaml = config_dir / "sops.yaml"
-
     if sops_yaml.exists():
         existing = sops_yaml.read_text()
-        keys = _parse_sops_keys(existing)
-        had_key = any(k == public_key for k, _ in keys)
+        old = _parse_sops_keys(existing)
     else:
         existing = None
-        keys = []
-        had_key = False
+        old = []
+    old_keys = {k for k, _ in old}
 
-    keys = _merge_key_entries(keys, [(public_key, None)])
-
+    supplied: List[KeyEntry] = [(public_key, None)] + list(extra_keys or [])
+    keys = _merge_key_entries(old, supplied)
+    added = [(k, lbl) for k, lbl in keys if k not in old_keys]
     new_content = _render_sops_yaml(keys)
 
     if existing == new_content:
         if not quiet:
             ok(f"{sops_yaml} (already up to date)")
-        return
+        return False
 
     sops_yaml.write_text(new_content)
-    if quiet:
-        return
-    if existing is None:
-        created(f"{sops_yaml}")
-        info(f"added public key {public_key}")
-    else:
-        updated(f"{sops_yaml}")
-        if had_key:
-            info(f"refreshed creation_rules (preserved {len(keys)} key(s))")
+    if not quiet:
+        if existing is None:
+            created(f"{sops_yaml}")
         else:
-            info(f"added public key {public_key}")
+            updated(f"{sops_yaml}")
+        for k, lbl in added:
+            info(f"added key: {_describe(k, lbl)}")
+        if not added:
+            info(f"refreshed creation_rules (preserved {len(keys)} key(s))")
+    return bool(added)
 
 
 _AGENTS_MD_CONTENT = """\
@@ -691,5 +719,27 @@ def init_config(config_dir: Path, quiet: bool = False) -> None:
 
     if not quiet:
         info(f"public key: {public_key}")
+
+    # ---- User config (listed public keys) ---------------------------------
+    from . import paths
+    from .userconfig import load_public_keys, seed_user_config
+
+    uc_path, uc_source = paths.user_config_path_and_source()
+    if seed_user_config(public_key, uc_path):
+        if not quiet:
+            created(f"user config {uc_path} (seeded with your key)")
+            info("edit it to change labels or add teammates' public keys")
+    elif not quiet:
+        ok(f"user config: {uc_path} ({uc_source})")
+    extra_keys = load_public_keys(uc_path)
+
+    if not quiet:
         heading("📝 Updating sops.yaml:")
-    _update_sops_yaml(config_dir, public_key, quiet=quiet)
+    changed = _update_sops_yaml(
+        config_dir, public_key, quiet=quiet, extra_keys=extra_keys
+    )
+    if changed and not quiet and _has_encrypted_files(config_dir):
+        warn(
+            "recipients changed but existing encrypted files were not "
+            "re-encrypted; run `dotconfig reencrypt` to apply the new keys"
+        )
