@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from dotconfig.init import (
     _AGENTS_MD_CONTENT,
@@ -234,12 +235,15 @@ class TestRenderSopsYaml:
         between = out[public_idx:catchall_idx]
         assert "age:" not in between
 
-    def test_keys_render_with_trailing_commas_except_last(self):
-        out = _render_sops_yaml(["age1abc", "age1def", "age1ghi"])
-        assert "age1abc," in out
-        assert "age1def," in out
-        # Last key has no trailing comma
-        assert "age1ghi\n" in out
+    def test_renders_key_groups_list(self):
+        out = _render_sops_yaml(["age1abc", "age1def"])
+        assert "key_groups:" in out
+        assert "- age1abc\n" in out
+        assert "age1abc," not in out
+        data = yaml.safe_load(out)
+        assert data["creation_rules"][1]["key_groups"] == [
+            {"age": ["age1abc", "age1def"]}
+        ]
 
     def test_round_trips_through_collect(self):
         keys = ["age1abc", "age1def"]

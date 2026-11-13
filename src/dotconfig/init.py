@@ -16,10 +16,11 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import yaml
 
+from .userconfig import KeyEntry
 from .output import created, error, heading, info, ok, updated, warn
 from .versioning import seed_version_from_sources
 
@@ -160,12 +161,49 @@ def _derive_public_key(secret_key: str) -> Optional[str]:
         return None
 
 
-def _collect_age_keys(content: str) -> List[str]:
-    """Return all age public keys found in a sops.yaml *content*, in order.
+def _clean_label(label: Optional[str]) -> Optional[str]:
+    """Make *label* safe for a trailing YAML comment.
 
-    Walks every entry under ``creation_rules`` and unions their ``age:``
-    values, regardless of which rule they appeared in. Accepts the
-    block-scalar (comma-separated), inline string, and YAML list forms.
+    Newlines and other whitespace runs collapse to a single space. A ``#``
+    is harmless inside a comment (parsing takes everything after the first
+    ``#`` that follows the key), so it is kept. Empty results become None.
+    """
+    if label is None:
+        return None
+    cleaned = " ".join(str(label).split())
+    return cleaned or None
+
+
+_KEY_COMMENT_RE = re.compile(r"(age1[0-9a-z]+)[\"',\s]*#\s*(.*?)\s*$")
+
+
+def _rule_age_candidates(rule: dict) -> List[str]:
+    """Return raw age strings from one creation rule (all forms)."""
+    sources = [rule.get("age")]
+    groups = rule.get("key_groups")
+    if isinstance(groups, list):
+        for g in groups:
+            if isinstance(g, dict):
+                sources.append(g.get("age"))
+    out: List[str] = []
+    for age in sources:
+        if not age:
+            continue
+        if isinstance(age, str):
+            out.extend(re.split(r"[,\s]+", age.strip()))
+        elif isinstance(age, list):
+            for item in age:
+                if isinstance(item, str):
+                    out.extend(re.split(r"[,\s]+", item.strip()))
+    return out
+
+
+def _parse_sops_keys(content: str) -> List[KeyEntry]:
+    """Return ``(key, label)`` pairs from sops.yaml *content*, in order.
+
+    Reads block-scalar, inline string, list and ``key_groups`` forms.
+    Labels come from a trailing ``# label`` comment on the key's line
+    (found with a line scanner, since YAML loaders drop comments).
     Duplicates are dropped, preserving first-seen order.
     """
     try:
@@ -178,46 +216,69 @@ def _collect_age_keys(content: str) -> List[str]:
     if not isinstance(rules, list):
         return []
 
-    keys: List[str] = []
+    labels = {}
+    for line in content.splitlines():
+        m = _KEY_COMMENT_RE.search(line)
+        if m and m.group(1) not in labels:
+            labels[m.group(1)] = _clean_label(m.group(2))
+
+    entries: List[KeyEntry] = []
     seen: set = set()
     for rule in rules:
         if not isinstance(rule, dict):
             continue
-        age = rule.get("age")
-        if not age:
-            continue
-        candidates: List[str] = []
-        if isinstance(age, str):
-            candidates = re.split(r"[,\s]+", age.strip())
-        elif isinstance(age, list):
-            for item in age:
-                if isinstance(item, str):
-                    candidates.extend(re.split(r"[,\s]+", item.strip()))
-        for c in candidates:
+        for c in _rule_age_candidates(rule):
             c = c.strip().rstrip(",")
             if c.startswith("age1") and c not in seen:
                 seen.add(c)
-                keys.append(c)
-    return keys
+                entries.append((c, labels.get(c)))
+    return entries
 
 
-def _render_sops_yaml(age_keys: List[str]) -> str:
-    """Render the canonical two-rule sops.yaml.
+def _collect_age_keys(content: str) -> List[str]:
+    """Return all age public keys found in sops.yaml *content*, in order."""
+    return [k for k, _ in _parse_sops_keys(content)]
+
+
+def _merge_key_entries(
+    existing: List[KeyEntry], supplied: List[KeyEntry]
+) -> List[KeyEntry]:
+    """Merge *supplied* entries into *existing*, preserving order.
+
+    Existing keys keep their position; a supplied non-None label overrides,
+    otherwise the existing label is kept. New keys are appended.
+    """
+    merged = {k: lbl for k, lbl in existing}
+    order = [k for k, _ in existing]
+    for k, lbl in supplied:
+        if k not in merged:
+            order.append(k)
+            merged[k] = _clean_label(lbl)
+        elif _clean_label(lbl) is not None:
+            merged[k] = _clean_label(lbl)
+    return [(k, merged[k]) for k in order]
+
+
+def _render_sops_yaml(age_keys: List[Union[str, KeyEntry]]) -> str:
+    """Render the canonical two-rule sops.yaml in ``key_groups`` form.
 
     Rule 1 matches ``public.env`` and has no recipients (sops will refuse
     to encrypt files matching it — but dotconfig never asks it to).
-    Rule 2 is the catch-all, holding every age recipient key in a single
-    block-scalar list.
+    Rule 2 is the catch-all with one key group whose ``age`` list holds
+    every recipient, each with an optional trailing ``# label`` comment.
+    Items are plain key strings or ``(key, label)`` pairs.
     """
     lines = [
         "creation_rules:",
         f"  - path_regex: '{_SOPS_PUBLIC_PATH_REGEX}'",
         f"  - path_regex: '{_SOPS_ENCRYPT_PATH_REGEX}'",
-        "    age: >-",
+        "    key_groups:",
+        "      - age:",
     ]
-    for i, key in enumerate(age_keys):
-        suffix = "," if i < len(age_keys) - 1 else ""
-        lines.append(f"      {key}{suffix}")
+    for item in age_keys:
+        key, label = (item, None) if isinstance(item, str) else item
+        label = _clean_label(label)
+        lines.append(f"          - {key}" + (f"  # {label}" if label else ""))
     return "\n".join(lines) + "\n"
 
 
@@ -234,15 +295,14 @@ def _update_sops_yaml(config_dir: Path, public_key: str, quiet: bool = False) ->
 
     if sops_yaml.exists():
         existing = sops_yaml.read_text()
-        keys = _collect_age_keys(existing)
-        had_key = public_key in keys
+        keys = _parse_sops_keys(existing)
+        had_key = any(k == public_key for k, _ in keys)
     else:
         existing = None
         keys = []
         had_key = False
 
-    if public_key not in keys:
-        keys.append(public_key)
+    keys = _merge_key_entries(keys, [(public_key, None)])
 
     new_content = _render_sops_yaml(keys)
 
