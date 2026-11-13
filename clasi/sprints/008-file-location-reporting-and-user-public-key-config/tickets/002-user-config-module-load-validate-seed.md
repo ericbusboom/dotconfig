@@ -1,7 +1,7 @@
 ---
 id: '002'
 title: 'User config module: load, validate, seed'
-status: open
+status: done
 use-cases:
 - SUC-003
 depends-on:
@@ -20,13 +20,13 @@ Create src/dotconfig/userconfig.py: load_public_keys(path=None) -> list of (key,
 
 ## Acceptance Criteria
 
-- [ ] Valid file returns ordered (key,label) pairs; missing label yields None
-- [ ] Non-age1 or missing-key entries are skipped with a warning naming the file path
-- [ ] Malformed YAML or non-list public_keys warns and returns []
-- [ ] seed creates parent dirs and the file with the given key and <user>@<hostname> label; a second call does not overwrite and returns False
-- [ ] Duplicate keys collapsed, first label wins
-- [ ] Respects XDG_CONFIG_HOME via paths
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] Valid file returns ordered (key,label) pairs; missing label yields None
+- [x] Non-age1 or missing-key entries are skipped with a warning naming the file path
+- [x] Malformed YAML or non-list public_keys warns and returns []
+- [x] seed creates parent dirs and the file with the given key and <user>@<hostname> label; a second call does not overwrite and returns False
+- [x] Duplicate keys collapsed, first label wins
+- [x] Respects XDG_CONFIG_HOME via paths
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 
