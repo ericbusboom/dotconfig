@@ -1,9 +1,13 @@
 ---
 id: 008
 title: File location reporting and user public-key config
-status: planning-docs
+status: done
 branch: sprint/008-file-location-reporting-and-user-public-key-config
-use-cases: [SUC-001, SUC-002, SUC-003, SUC-004]
+use-cases:
+- SUC-001
+- SUC-002
+- SUC-003
+- SUC-004
 issues:
 - report-file-locations.md
 - user-config-public-keys.md
