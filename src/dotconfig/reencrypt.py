@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import paths
 from .load import _decrypt_sops, _is_sops_encrypted
 from .keyguard import require_unlocked
 from .output import created, error, heading, info, ok
@@ -44,10 +45,10 @@ def reencrypt_all(config_dir: Path) -> None:
         rel = path.relative_to(config_dir)
         plaintext = _decrypt_sops(path, sops_cfg)
         if plaintext is None:
-            error(f"failed to decrypt {rel}")
+            error(f"failed to decrypt {rel} ({paths.decrypt_context(config_dir)})")
             sys.exit(1)
         if not _encrypt_sops(plaintext, path, sops_cfg):
-            error(f"failed to re-encrypt {rel}")
+            error(f"failed to re-encrypt {rel} ({paths.decrypt_context(config_dir)})")
             sys.exit(1)
         created(f"{rel} 🔒")
 

@@ -24,6 +24,7 @@ import yaml
 
 from .keyguard import require_unlocked
 from .keystore import atomic_write
+from . import paths
 from .output import error, info, ok, warn
 from .versioning import load_dotconfig_yaml
 
@@ -94,7 +95,8 @@ def _read_file_content(path: Path, sops_config: Optional[Path]) -> str:
     if _is_sops_encrypted(path):
         content = _decrypt_sops(path, sops_config)
         if content is None:
-            error(f"failed to decrypt {path}")
+            root = sops_config.parent if sops_config is not None else None
+            error(f"failed to decrypt {path} ({paths.decrypt_context(root)})")
             sys.exit(1)
         return content
     return path.read_text()
@@ -251,7 +253,9 @@ def _decrypt_sops(filepath: Path, sops_config: Optional[Path] = None) -> Optiona
         warn(f"sops not found — skipping encrypted file {filepath}")
         return None
     except subprocess.CalledProcessError as e:
-        warn(f"sops decryption failed for {filepath}: {e.stderr.strip()}")
+        root = sops_config.parent if sops_config is not None else None
+        warn(f"sops decryption failed for {filepath}: {e.stderr.strip()} "
+             f"({paths.decrypt_context(root)})")
         return None
     finally:
         if tmp_path is not None:
@@ -642,7 +646,8 @@ def _embed_files_section(
         if _is_sops_encrypted(source):
             content = _decrypt_sops(source, sops_config)
             if content is None:
-                error(f"failed to decrypt {source}")
+                error(f"failed to decrypt {source} "
+                      f"({paths.decrypt_context(sops_config.parent)})")
                 sys.exit(1)
             content_bytes = content.encode()
         else:

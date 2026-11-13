@@ -151,6 +151,45 @@ def _resolve_config_dir(ctx: click.Context) -> Optional[Path]:
     return None
 
 
+def _report_paths(
+    ctx: click.Context,
+    cfg: Path,
+    *,
+    err: bool = False,
+    quiet: bool = False,
+    key: bool = True,
+) -> None:
+    """Print the resolved config root and key file (one short line each).
+
+    *err* routes the lines to stderr (for stdout-sensitive modes); *quiet*
+    suppresses them entirely.
+    """
+    if quiet:
+        return
+    from . import paths
+    from .discover import find_config_dir
+    from .output import info as _info
+
+    explicit = _resolve_config_dir(ctx)
+    if explicit:
+        source = paths.config_root(explicit)[1]
+    elif find_config_dir():
+        source = paths.SOURCE_DISCOVERED
+    else:
+        source = paths.SOURCE_DEFAULT
+    _info(f"config root: {cfg.resolve()} ({source})", err=err)
+    if key:
+        _info(f"key file: {paths.key_path()} ({paths.key_path_source()})", err=err)
+
+
+_quiet_option = click.option(
+    "-q", "--quiet",
+    is_flag=True,
+    default=False,
+    help="Suppress the resolved-path lines.",
+)
+
+
 def _config_dir(ctx: click.Context) -> Path:
     """Config dir for a command: -c/DOTCONFIG_DIR, then discovery, then ./config.
 
@@ -274,6 +313,7 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
         Path(config_dir).expanduser() if config_dir
         else _resolve_config_dir(ctx) or Path("config")
     )
+    _report_paths(ctx, cfg, quiet=quiet, key=False)
     init_config(config_dir=cfg, quiet=quiet)
     run_hook(cfg, "init", [str(cfg.resolve())])
 
@@ -383,6 +423,7 @@ def init(ctx: click.Context, config_dir: str, quiet: bool) -> None:
          "deployment/local recorded in the current .env. Never decrypts, so "
          "it works while the age key is locked; 'save' refuses the result.",
 )
+@_quiet_option
 @click.pass_context
 def load(
     ctx: click.Context,
@@ -400,6 +441,7 @@ def load(
     no_export: bool,
     add_export: bool,
     public_only: bool,
+    quiet: bool,
 ) -> None:
     """Assemble config files into .env, or load a specific file.
 
@@ -500,6 +542,7 @@ def load(
         no_export = True
 
     cfg = _config_dir(ctx)
+    _report_paths(ctx, cfg, err=to_stdout, quiet=quiet)
 
     # ---- Resolve positional names vs legacy -d/-l flags ----
     if names and (deploy or local):
@@ -685,6 +728,7 @@ def load(
          ".env files. Pairs with load's --no-export for round-trip style "
          "preservation.",
 )
+@_quiet_option
 @click.pass_context
 def save(
     ctx: click.Context,
@@ -699,6 +743,7 @@ def save(
     use_yaml: bool,
     flat: bool,
     add_export: bool,
+    quiet: bool,
 ) -> None:
     """Save .env sections back to config/ source files, or store a file.
 
@@ -743,6 +788,7 @@ def save(
         raise click.UsageError("--flat requires --json or --yaml")
 
     cfg = _config_dir(ctx)
+    _report_paths(ctx, cfg, quiet=quiet)
 
     if encrypt and not filename:
         raise click.UsageError("--encrypt can only be used with --file")
@@ -1439,6 +1485,7 @@ def reencrypt(ctx: click.Context) -> None:
     if cfg is None:
         cfg = find_config_dir() or Path("config")
 
+    _report_paths(ctx, cfg)
     reencrypt_all(cfg)
 
 

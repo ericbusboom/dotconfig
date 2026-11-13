@@ -1,7 +1,7 @@
 ---
 id: '005'
 title: Print resolved paths in commands and include them in errors
-status: in-progress
+status: done
 use-cases:
 - SUC-002
 depends-on:
@@ -21,11 +21,11 @@ Make load, save, init, age unlock/lock and key print the resolved paths they rea
 
 ## Acceptance Criteria
 
-- [ ] Each listed command prints its resolved paths; suppressed under --quiet
-- [ ] Decrypt failure message includes the config root and key file path
-- [ ] Paths come from the paths module (no duplicated resolution)
-- [ ] Existing tests pass; new tests assert path lines with CliRunner
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] Each listed command prints its resolved paths; suppressed under --quiet
+- [x] Decrypt failure message includes the config root and key file path
+- [x] Paths come from the paths module (no duplicated resolution)
+- [x] Existing tests pass; new tests assert path lines with CliRunner
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 

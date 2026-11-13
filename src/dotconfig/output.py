@@ -28,9 +28,9 @@ def updated(text: str) -> None:
     click.echo(f"  {_s('~', fg='yellow')} {text}")
 
 
-def info(text: str) -> None:
-    """Print an informational line."""
-    click.echo(f"  {_s('ℹ', fg='cyan')} {text}")
+def info(text: str, err: bool = False) -> None:
+    """Print an informational line (to stderr when *err* is true)."""
+    click.echo(f"  {_s('ℹ', fg='cyan')} {text}", err=err)
 
 
 def warn(text: str) -> None:

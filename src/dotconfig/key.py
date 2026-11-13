@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .discover import find_config_dir
+from . import paths
 from .load import _decrypt_sops, _is_sops_encrypted
 from .keyguard import require_unlocked
 from .keystore import atomic_write
@@ -117,12 +118,12 @@ def gen_key(
     # Read the private key content, then encrypt it in place
     priv_content = priv_path.read_text()
     if _encrypt_sops(priv_content, priv_path, sops_cfg):
-        created(f"{priv_path.name} (encrypted)")
+        created(f"{priv_path} (encrypted)")
     else:
         warn("private key saved but SOPS encryption failed — key is plaintext!")
-        created(f"{priv_path.name} (plaintext)")
+        created(f"{priv_path} (plaintext)")
 
-    created(f"{pub_path.name}")
+    created(f"{pub_path}")
     ok(f"generated {key_type} keypair '{name}'")
 
 
@@ -149,10 +150,10 @@ def save_key(
     # Encrypt and store private key
     content = file.read_text()
     if _encrypt_sops(content, dest, sops_cfg):
-        created(f"{dest.name} (encrypted)")
+        created(f"{dest} (encrypted)")
     else:
         warn("SOPS encryption failed — key stored as plaintext")
-        created(f"{dest.name} (plaintext)")
+        created(f"{dest} (plaintext)")
 
     # Auto-grab .pub companion if it exists
     pub_source = file.parent / f"{file.name}.pub"
@@ -161,7 +162,7 @@ def save_key(
     if pub_source.exists():
         pub_dest = keys / f"{key_name}.pub"
         shutil.copy2(pub_source, pub_dest)
-        created(f"{pub_dest.name}")
+        created(f"{pub_dest}")
 
     ok(f"saved key '{key_name}'")
 
@@ -172,7 +173,8 @@ def _decrypt_priv(priv: Path, sops_cfg: Optional[Path]) -> str:
         require_unlocked()
         content = _decrypt_sops(priv, sops_cfg)
         if content is None:
-            error(f"failed to decrypt {priv}")
+            error(f"failed to decrypt {priv} "
+                  f"({paths.decrypt_context(sops_cfg.parent if sops_cfg else None)})")
             sys.exit(1)
         return content
     return priv.read_text()
@@ -271,7 +273,8 @@ def pub_key(name: str, config_dir: Optional[Path] = None) -> None:
         require_unlocked()
         content = _decrypt_sops(priv, sops_cfg)
         if content is None:
-            error(f"failed to decrypt {priv}")
+            error(f"failed to decrypt {priv} "
+                  f"({paths.decrypt_context(sops_cfg.parent if sops_cfg else None)})")
             sys.exit(1)
     else:
         content = priv.read_text()

@@ -165,3 +165,12 @@ def all_locations(explicit: Optional[Path] = None) -> List[Location]:
         pl[0] = _loc("config root", root, src)
         locs += pl
     return locs
+
+
+def decrypt_context(root: Optional[Path] = None) -> str:
+    """One-line ``config root ...; key file ...`` hint for decrypt errors."""
+    parts = []
+    if root is not None:
+        parts.append(f"config root: {Path(root).resolve()}")
+    parts.append(f"key file: {key_path()}")
+    return "; ".join(parts)

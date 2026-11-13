@@ -384,7 +384,7 @@ class TestSaveCliPositional:
         )
         assert result.exit_code == 0, result.output
         import json
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         assert data == {"FOO": "bar"}
 
     def test_stdout_implies_no_export(self, tmp_path, monkeypatch):
