@@ -1,7 +1,7 @@
 ---
 id: '004'
 title: 'init integration: user config, merged labeled keys, reencrypt notice'
-status: open
+status: in-progress
 use-cases:
 - SUC-003
 - SUC-004
