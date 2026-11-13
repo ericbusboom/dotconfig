@@ -1,7 +1,7 @@
 ---
 id: '003'
 title: Label-aware sops.yaml parse and key_groups render
-status: in-progress
+status: done
 use-cases:
 - SUC-004
 depends-on:
@@ -20,13 +20,13 @@ In init.py add _parse_sops_keys(content) -> list of (key,label) reading every le
 
 ## Acceptance Criteria
 
-- [ ] Parse returns keys (and labels where present) for block scalar, inline, list and key_groups sources
-- [ ] Render->parse round trip preserves keys, order and labels; unlabeled keys render without a comment
-- [ ] Existing label kept for a key absent from supplied labels; a supplied label overrides
-- [ ] Rendered file works with real sops: encrypt and decrypt round trip with 2 recipients, decryptable by either key (skip if sops/age missing)
-- [ ] Existing init tests updated for the new layout and pass
-- [ ] public.env no-op rule unchanged
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] Parse returns keys (and labels where present) for block scalar, inline, list and key_groups sources
+- [x] Render->parse round trip preserves keys, order and labels; unlabeled keys render without a comment
+- [x] Existing label kept for a key absent from supplied labels; a supplied label overrides
+- [x] Rendered file works with real sops: encrypt and decrypt round trip with 2 recipients, decryptable by either key (skip if sops/age missing)
+- [x] Existing init tests updated for the new layout and pass
+- [x] public.env no-op rule unchanged
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 
