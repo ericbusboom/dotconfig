@@ -197,6 +197,45 @@ def cli(ctx: click.Context, config_root: Optional[str]) -> None:
 
 
 @cli.command()
+@click.pass_context
+def where(ctx: click.Context) -> None:
+    """Show where dotconfig reads and writes files.
+
+    Lists the age key file, wrapped copies, lock sidecar, user config,
+    ssh config and (when a config root is found) project files, with the
+    source each path was resolved from (env, default, discovered, derived)
+    and whether it exists.
+
+    Example:
+
+    \b
+        dotconfig where
+    """
+    from . import paths
+    from .output import heading, item
+
+    def _fmt(loc: "paths.Location") -> str:
+        mark = "exists" if loc.exists else "missing"
+        where_ = str(loc.path) if loc.path is not None else "(inline)"
+        line = f"{loc.name}: {where_}  [{loc.source}, {mark}]"
+        return f"{line}  {loc.note}" if loc.note else line
+
+    explicit = _resolve_config_dir(ctx)
+    heading("User-level")
+    for loc in paths.user_locations():
+        item(_fmt(loc))
+    root, src = paths.config_root(explicit)
+    heading("Project")
+    if root is None:
+        item("No config root found (run from a project, or use -c/--config).")
+        return
+    project = paths.project_locations(root)
+    project[0] = paths._loc("config root", root, src)
+    for loc in project:
+        item(_fmt(loc))
+
+
+@cli.command()
 @click.option(
     "--config-dir",
     default=None,

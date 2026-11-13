@@ -21,3 +21,12 @@ def _isolated_age_key(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("SOPS_AGE_KEY_FILE", str(kf))
     monkeypatch.delenv("SOPS_AGE_KEY", raising=False)
     return kf
+
+
+@pytest.fixture(autouse=True)
+def _isolated_user_dirs(_isolated_age_key, tmp_path_factory, monkeypatch):
+    """Redirect HOME and XDG_CONFIG_HOME so no test touches ~/.config or ~/.ssh."""
+    home = _isolated_age_key.parents[3]  # the age_home dir set up above
+    monkeypatch.setenv("HOME", str(home))
+    xdg = tmp_path_factory.mktemp("xdg_config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))

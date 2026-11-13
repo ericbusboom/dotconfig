@@ -20,11 +20,11 @@ from typing import Any, Callable, Optional
 import yaml
 
 from .output import warn
+from .paths import DEFAULT_KEY_PATH, key_path, sidecar_path, wrapped_path  # noqa: F401
 
 #: Exit code used when the age key is locked (distinct from ordinary failure 1).
 EXIT_LOCKED = 75
 
-DEFAULT_KEY_PATH = Path("~/.config/sops/age/keys.txt")
 
 
 class LockedKeyError(Exception):
@@ -40,28 +40,7 @@ class AgeToolError(Exception):
     """An age binary is missing or a call to it failed."""
 
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-
-def key_path() -> Path:
-    """Path of the plain key: ``$SOPS_AGE_KEY_FILE`` or the default."""
-    env = os.environ.get("SOPS_AGE_KEY_FILE")
-    return (Path(env) if env else DEFAULT_KEY_PATH).expanduser()
-
-
-def wrapped_path(method_id: str) -> Path:
-    """Path of the wrapped copy for a method: ``<keyfile>.<method>.age``."""
-    kp = key_path()
-    return kp.with_name(f"{kp.name}.{method_id}.age")
-
-
-def sidecar_path() -> Path:
-    """Path of the metadata sidecar: ``<keyfile>.lock.yaml``."""
-    kp = key_path()
-    return kp.with_name(f"{kp.name}.lock.yaml")
-
+# Path resolution lives in ``paths`` (re-exported above for compatibility).
 
 # ---------------------------------------------------------------------------
 # Atomic writes

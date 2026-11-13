@@ -1,7 +1,7 @@
 ---
 id: '001'
 title: Shared paths module and dotconfig where command
-status: open
+status: done
 use-cases:
 - SUC-001
 depends-on: []
@@ -19,12 +19,12 @@ Create src/dotconfig/paths.py as the single source of truth for locations: age k
 
 ## Acceptance Criteria
 
-- [ ] paths module returns path, source and exists for every location listed in report-file-locations.md plus the user config
-- [ ] XDG_CONFIG_HOME set -> user config path under it; unset or empty -> ~/.config/dotconfig/config.yaml
-- [ ] SOPS_AGE_KEY_FILE overrides the default key path and is reported as source env
-- [ ] keystore.key_path/wrapped_path/sidecar_path keep their public behavior; no circular import
-- [ ] `dotconfig where` prints all entries, works outside a project (says no config root found), and follows output.py conventions
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] paths module returns path, source and exists for every location listed in report-file-locations.md plus the user config
+- [x] XDG_CONFIG_HOME set -> user config path under it; unset or empty -> ~/.config/dotconfig/config.yaml
+- [x] SOPS_AGE_KEY_FILE overrides the default key path and is reported as source env
+- [x] keystore.key_path/wrapped_path/sidecar_path keep their public behavior; no circular import
+- [x] `dotconfig where` prints all entries, works outside a project (says no config root found), and follows output.py conventions
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 
