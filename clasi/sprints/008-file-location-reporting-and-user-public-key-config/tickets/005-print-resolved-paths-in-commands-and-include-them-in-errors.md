@@ -1,7 +1,7 @@
 ---
 id: '005'
 title: Print resolved paths in commands and include them in errors
-status: open
+status: in-progress
 use-cases:
 - SUC-002
 depends-on:
