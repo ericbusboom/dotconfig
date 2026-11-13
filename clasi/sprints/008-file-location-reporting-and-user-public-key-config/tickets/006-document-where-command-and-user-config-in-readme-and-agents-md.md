@@ -1,7 +1,7 @@
 ---
 id: '006'
 title: Document where command and user config in README and AGENTS.md
-status: open
+status: in-progress
 use-cases:
 - SUC-001
 - SUC-004
