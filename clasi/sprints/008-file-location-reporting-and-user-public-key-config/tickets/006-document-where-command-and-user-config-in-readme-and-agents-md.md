@@ -1,7 +1,7 @@
 ---
 id: '006'
 title: Document where command and user config in README and AGENTS.md
-status: in-progress
+status: done
 use-cases:
 - SUC-001
 - SUC-004
@@ -24,11 +24,11 @@ Document `dotconfig where`, the user config file (location, XDG, format, labels)
 
 ## Acceptance Criteria
 
-- [ ] README documents where, user config format/location and the reencrypt step
-- [ ] AGENTS.md template mentions where and the user config
-- [ ] Doc examples match actual command output
-- [ ] Affected tests (any AGENTS.md generation tests) pass
-- [ ] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
+- [x] README documents where, user config format/location and the reencrypt step
+- [x] AGENTS.md template mentions where and the user config
+- [x] Doc examples match actual command output
+- [x] Affected tests (any AGENTS.md generation tests) pass
+- [x] Tests use an autouse fixture (tests/conftest.py, added by the first ticket that needs it) that monkeypatches HOME and XDG_CONFIG_HOME (and clears SOPS_AGE_KEY_FILE/SOPS_AGE_KEY unless a test sets them) to tmp dirs. No test touches the real ~/.config.
 
 ## Implementation Plan
 

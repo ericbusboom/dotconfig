@@ -378,13 +378,19 @@ dotconfig save dev                  # flatten the assembly into config/dev/
 # Load/save a specific file
 dotconfig load -d dev --file app.yaml --stdout
 dotconfig save -d dev --file app.yaml
+
+# Show where dotconfig reads/writes files (key file, user config, config root)
+dotconfig where
+
+# Suppress the resolved-path lines printed by load/save
+dotconfig load -q dev yourname
 ```
 
 ## Directory layout
 
 ```
 config/
-  sops.yaml                    # SOPS encryption rules
+  sops.yaml                    # SOPS rules: key_groups, one `age1...  # label` per recipient
   dev/
     public.env                 # Public config for "dev"
     secrets.env                # SOPS-encrypted secrets for "dev"
@@ -418,6 +424,22 @@ so `dotconfig save` can round-trip edits back to the correct source files.
 - **Secrets files are SOPS-encrypted** — use `dotconfig save` (not manual
   sops commands) to re-encrypt after editing `.env`.
 - Deployment names are open-ended: dev, prod, test, staging, ci, etc.
+
+## User config and recipients
+
+`~/.config/dotconfig/config.yaml` (or `$XDG_CONFIG_HOME/dotconfig/config.yaml`)
+lists public keys that `dotconfig init` merges into `config/sops.yaml`:
+
+```yaml
+public_keys:
+  - key: age1...
+    name: alice@laptop
+```
+
+`init` seeds it with your key (`<user>@<hostname>`) if it is missing. After
+`init` adds recipients to a project with encrypted files, run
+`dotconfig reencrypt`. If a decrypt fails, the error shows the config root and
+key file in use; `dotconfig where` lists all paths.
 """
 
 

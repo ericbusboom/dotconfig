@@ -26,6 +26,8 @@ overrides — and can round-trip it back.  It is designed for teams where:
   - [`dotconfig save`](#dotconfig-save)
   - [`dotconfig diff`](#dotconfig-diff)
 - [SOPS integration](#sops-integration)
+- [Where files live (`dotconfig where`)](#where-files-live-dotconfig-where)
+- [User config and shared public keys](#user-config-and-shared-public-keys)
 - [Locking the age key](#locking-the-age-key-lock--unlock)
 - [Workflow](#workflow)
 - [Adding a new deployment](#adding-a-new-deployment)
@@ -449,23 +451,22 @@ If `SOPS_AGE_KEY_FILE` is defined inside `.env` itself (e.g. in the
 public-local section), `dotconfig save` reads it from the file before
 invoking sops, so you do not need to export it manually.
 
-**Recommended `config/sops.yaml`:**
+**`config/sops.yaml`** is written by `dotconfig init` in `key_groups` form.
+Each recipient is one line, with an optional `# label` comment:
 
 ```yaml
 creation_rules:
-  # Secrets companion files (app.secrets.yaml, etc.)
-  - path_regex: '.+\.secrets\.(?:env|json|yaml|yml|txt|conf)$'
-    age: >-
-      age1v3f2rn...,age1h02a69...
-  # Legacy secrets files (secrets.env, etc.)
-  - path_regex: '.+/secrets\.(?:env|json|yaml|yml|txt|conf)$'
-    age: >-
-      age1v3f2rn...,age1h02a69...
-  # Catch-all for any file dotconfig encrypts (private keys, etc.)
+  - path_regex: '(^|/)public\.env$'
   - path_regex: '.+'
-    age: >-
-      age1v3f2rn...,age1h02a69...
+    key_groups:
+      - age:
+          - age1v3f2rn...  # alice@laptop
+          - age1h02a69...  # bob@workstation
 ```
+
+The first rule (`public.env`, no recipients) keeps public files unencrypted.
+Existing keys and labels in an existing `sops.yaml` are kept when `init`
+runs again.
 
 Because `sops.yaml` is not a dotfile, SOPS will not auto-discover it.
 Specify it explicitly when invoking sops directly:
@@ -475,6 +476,74 @@ SOPS_CONFIG=config/sops.yaml sops --encrypt --in-place config/dev/secrets.env
 # or
 sops --config config/sops.yaml --encrypt --in-place config/dev/secrets.env
 ```
+
+---
+
+## Where files live (`dotconfig where`)
+
+`dotconfig where` lists every path dotconfig reads or writes, where each
+path came from, and whether it exists:
+
+```
+$ dotconfig where
+User-level
+  age key file: /home/alice/.config/sops/age/keys.txt  [default, exists]
+  wrapped key: /home/alice/.config/sops/age/keys.txt.<method>.age  [derived, missing]
+  lock sidecar: /home/alice/.config/sops/age/keys.txt.lock.yaml  [derived, missing]
+  user config: /home/alice/.config/dotconfig/config.yaml  [default, exists]
+  ssh config: /home/alice/.ssh/config  [default, exists]
+Project
+  config root: /home/alice/proj/config  [discovered, exists]
+  sops.yaml: /home/alice/proj/config/sops.yaml  [derived, exists]
+  ...
+```
+
+Sources are `env` (an environment variable such as `SOPS_AGE_KEY_FILE`,
+`XDG_CONFIG_HOME` or `DOTCONFIG_DIR`), `default`, `discovered` and `derived`.
+The Project section appears only when a config root is found (or given with
+`-c/--config`).
+
+`load`, `save` and `reencrypt` also print the config root and key file they
+use (`init` prints the config root only), so you can see what was picked:
+
+```
+  ℹ config root: /home/alice/proj/config (discovered)
+  ℹ key file: /home/alice/.config/sops/age/keys.txt (default)
+```
+
+`load`, `save` and `init` accept `-q/--quiet` to suppress those lines. With `load --stdout` they go to stderr, so piped output stays
+clean. Decrypt failures include the same context, for example
+`failed to decrypt config/dev/secrets.env (config root: /home/alice/proj/config; key file: /home/alice/.config/sops/age/keys.txt)`.
+
+---
+
+## User config and shared public keys
+
+dotconfig keeps a per-user config file at
+`$XDG_CONFIG_HOME/dotconfig/config.yaml`, falling back to
+`~/.config/dotconfig/config.yaml`. It lists age public keys that
+`dotconfig init` adds to every project's `config/sops.yaml`, so you only
+write your teammates' keys down once:
+
+```yaml
+public_keys:
+  - key: age1v3f2rn...
+    name: alice@laptop
+  - key: age1h02a69...
+    name: bob@workstation
+```
+
+- `key` (required) must be an age public key (`age1...`); `name` is an
+  optional label. Invalid entries are skipped with a warning naming the file.
+- `dotconfig init` creates this file if it is missing, seeded with your own
+  public key labeled `<user>@<hostname>`, and says so. It never overwrites an
+  existing file.
+- `init` merges every listed key (plus your local key) into
+  `config/sops.yaml`. Keys already in `sops.yaml` are kept with their
+  labels; labels from the user config win for matching keys.
+- If `init` changes the recipients and the project already has encrypted
+  files, it prints a notice: run `dotconfig reencrypt` to re-encrypt them for
+  the new keys.
 
 ---
 
@@ -660,10 +729,12 @@ The source files in `config/` are committed.  Encrypted secrets files
    age-keygen -o ~/.config/sops/age/keys.txt
    # Share the PUBLIC key (age1...) with the team
    ```
-2. Add their public key to `config/sops.yaml` and re-encrypt secrets:
+2. Add their public key to the `public_keys` list in your
+   [user config](#user-config-and-shared-public-keys) (or directly to
+   `config/sops.yaml`), then re-run `dotconfig init` and re-encrypt:
    ```bash
-   SOPS_CONFIG=config/sops.yaml sops updatekeys config/dev/secrets.env
-   SOPS_CONFIG=config/sops.yaml sops updatekeys config/prod/secrets.env
+   dotconfig init
+   dotconfig reencrypt
    ```
 3. The developer creates their local overrides:
    ```bash
