@@ -12,9 +12,8 @@ This skill creates sprint plans using a two-phase model:
   TODO references). No branches created.
 
 - **Phase 2 -- Detail**: One sprint at a time. Produces full planning
-  artifacts: a single `sprint.md` with right-sized Architecture and Use
-  Cases sections, plus tickets. Runs architecture review (or records it
-  `skipped` for a trivial/small sprint). No branches created.
+  artifacts: `usecases.md`, `architecture-update.md`, and tickets. Runs
+  architecture review. No branches created.
 
 Branches are created later via `acquire_execution_lock`, not during
 planning. All planning happens on main.
@@ -27,17 +26,13 @@ review, and ticket creation)
 ## Inputs
 
 - Stakeholder conversation describing the work to be done
-- `.clasi/brief.md` or `overview.md` in the project's configured design
-  directory (`paths.design` in `.clasi/config.yaml`, default
-  `docs/design/`) — must exist
-- `usecases.md` in the same configured design directory (project-level
-  use cases, must exist, or overview covers use cases) — distinct from
-  the sprint-level use cases written into each sprint's own `sprint.md`
+- `.clasi/brief.md` or `.clasi/design/overview.md` (must exist)
+- `.clasi/design/usecases.md` (must exist, or overview covers use cases)
 
 ## Critical Rule
 
-**DO NOT create tickets** during roadmap mode or in steps 1-11 of detail
-mode. Tickets are only created in step 13, after the sprint has advanced
+**DO NOT create tickets** during roadmap mode or in steps 1-10 of detail
+mode. Tickets are only created in step 12, after the sprint has advanced
 to the `ticketing` phase. The `create_ticket` MCP tool will reject
 attempts to create tickets before that phase. Follow the phases in order.
 
@@ -93,62 +88,51 @@ planning artifacts for one sprint at a time.
 2. **Update sprint.md**: Update the existing `sprint.md` with full
    details. Set frontmatter `status: planning-docs`.
 
-3. **Make the effort decision**: Decide, by feature size, whether this
-   sprint is trivial/small (minimal or omitted Architecture/Use Cases
-   sections, architecture review skipped) or substantial/structural
-   (full sections, full review). See the sprint-planner `agent.md` for
-   the full decision criteria.
+3. **Write usecases.md**: Sprint-level use cases (SUC-NNN).
 
-4. **Write the Use Cases section**: Sprint-level use cases (SUC-NNN)
-   within `sprint.md`, sized to the effort decision -- full use cases for
-   a substantial sprint, "N/A -- trivial" for a small one.
+4. **Write architecture-update.md**: Lightweight architecture update.
+   The architect fills this in to describe what changed in this sprint,
+   why, and the impact on existing components.
 
-5. **Write the Architecture section**: Within `sprint.md`, sized to the
-   effort decision -- a full write-up describing what changed in this
-   sprint, why, and the impact on existing components for a substantial
-   sprint, or "N/A -- trivial" for a small one.
-
-6. **Advance to architecture-review**: Call `advance_sprint_phase` to
+5. **Advance to architecture-review**: Call `advance_sprint_phase` to
    move from `planning-docs` to `architecture-review`.
 
-7. **Architecture review**: If the effort decision was trivial/small,
-   skip the review and call `record_gate_result` with gate
-   `architecture_review` and result `skipped`. Otherwise, review the
-   Architecture section (self-review by the sprint-planner, or delegate
-   to a reviewer) against the existing architecture and codebase, then
-   produce a verdict (APPROVE / APPROVE WITH CHANGES / REVISE).
-   - If REVISE: update the Architecture section and re-review.
+6. **Architecture review**: Delegate to the architecture-reviewer agent.
+   The reviewer reads the sprint plan, architecture document, and relevant
+   existing code, then produces a review (APPROVE / APPROVE WITH CHANGES /
+   REVISE).
+   - If REVISE: update the sprint document and re-review.
    - If APPROVE WITH CHANGES: note the changes for ticket creation.
    - Call `record_gate_result` with gate `architecture_review` and result
      `passed` or `failed`.
 
-8. **Advance to stakeholder-review**: If architecture review passed or
-   was skipped, call `advance_sprint_phase` to move to `stakeholder-review`.
+7. **Advance to stakeholder-review**: If architecture review passed,
+   call `advance_sprint_phase` to move to `stakeholder-review`.
 
-9. **Breakpoint (conditional)**: Check the sprint's `sprint.md`
-   Architecture section for a `## Open Questions` subsection.
+8. **Breakpoint (conditional)**: Check the sprint's
+   `architecture-update.md` for a `## Open Questions` section.
    - If open questions **exist**: skip this breakpoint and proceed to
-     step 10 (which resolves them interactively via `AskUserQuestion`).
+     step 9 (which resolves them interactively via `AskUserQuestion`).
    - If **no open questions** exist: present an `AskUserQuestion` to
      confirm continuation.
 
-10. **Resolve open questions**: If open questions exist in the
-    Architecture section:
-    - Parse each numbered question into a separate `AskUserQuestion` call.
-    - Provide 2-4 concrete options where possible.
-    - After all questions are answered, replace `## Open Questions` with
-      `## Decisions` listing each question and answer.
+9. **Resolve open questions**: If open questions exist in the
+   architecture document:
+   - Parse each numbered question into a separate `AskUserQuestion` call.
+   - Provide 2-4 concrete options where possible.
+   - After all questions are answered, replace `## Open Questions` with
+     `## Decisions` listing each question and answer.
 
-11. **Stakeholder review gate**: Present the sprint plan and architecture
+10. **Stakeholder review gate**: Present the sprint plan and architecture
     review to the stakeholder. Use `AskUserQuestion`:
     - "Approve sprint plan" (recommended)
     - "Request changes"
     - Call `record_gate_result` with gate `stakeholder_approval`.
 
-12. **Advance to ticketing**: If stakeholder approved, call
+11. **Advance to ticketing**: If stakeholder approved, call
     `advance_sprint_phase` to move to `ticketing`.
 
-12b. **Split partial-scope issues**: Before creating tickets, review
+11b. **Split partial-scope issues**: Before creating tickets, review
     each issue claimed by this sprint. If an issue covers more work than
     fits in this sprint, call `split_issue(filename, new_filename,
     new_title, new_body)` to carve out the in-scope piece. The new file
@@ -156,21 +140,21 @@ planning artifacts for one sprint at a time.
     `new_filename` in the ticket's `issue` field. The original issue
     retains the out-of-scope portion for a future sprint.
 
-13. **Create tickets**: Create tickets inline. Tickets are created in
+12. **Create tickets**: Create tickets inline. Tickets are created in
     the sprint's `tickets/` directory with per-sprint numbering (001, 002, ...).
 
-13b. **Update sprint.md ticket table**: After all tickets are created,
+12b. **Update sprint.md ticket table**: After all tickets are created,
      update the `## Tickets` section in `sprint.md` with a summary table
      listing each ticket's number, title, and depends-on values, in
      dependency order. Tickets execute serially in the order listed.
 
-14. **Acquire execution lock**: Call `acquire_execution_lock` to claim
+13. **Acquire execution lock**: Call `acquire_execution_lock` to claim
     the lock and create the sprint branch. Then call
     `advance_sprint_phase` to move to `executing`.
 
-15. **Set sprint status**: Update the sprint document status to `active`.
+14. **Set sprint status**: Update the sprint document status to `active`.
 
-16. **Confirm before execution**: Present the list of tickets to the
+15. **Confirm before execution**: Present the list of tickets to the
     stakeholder. Use `AskUserQuestion`:
     - "Start executing tickets" (recommended)
     - "Review tickets first"
@@ -180,8 +164,8 @@ planning artifacts for one sprint at a time.
 
 ### Detail Output
 
-- Sprint directory with full planning documents: `sprint.md` with
-  right-sized Architecture and Use Cases sections, plus `tickets/`
+- Sprint directory with full planning documents (sprint.md, usecases.md,
+  architecture-update.md)
 - Sprint `sprint.md` status set to `active`
 - Sprint branch `sprint/NNN-slug` created (via acquire_execution_lock)
 - Sprint phase advanced to `executing` in the state database

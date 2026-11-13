@@ -1,1 +1,1 @@
-/Volumes/Proj/proj/code-projects/dotconfig/.agents/skills/consolidate-architecture/SKILL.md
+/Users/eric/proj/code-projects/dotconfig/.agents/skills/consolidate-architecture/SKILL.md

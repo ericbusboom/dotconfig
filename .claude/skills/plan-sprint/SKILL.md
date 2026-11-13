@@ -1,1 +1,1 @@
-/Volumes/Proj/proj/code-projects/dotconfig/.agents/skills/plan-sprint/SKILL.md
+/Users/eric/proj/code-projects/dotconfig/.agents/skills/plan-sprint/SKILL.md

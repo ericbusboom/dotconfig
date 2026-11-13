@@ -16,8 +16,7 @@ stands and what should happen next.
 
 1. **Check artifacts**: Verify which SE documents exist:
    - `.clasi/brief.md`
-   - `usecases.md` in the project's configured design directory
-     (`paths.design` in `.clasi/config.yaml`, default `docs/design/`)
+   - `.clasi/design/usecases.md`
    - `docs/architecture/` (versioned architecture documents)
 2. **Check sprints**: Scan `clasi/sprints/` for active sprints and
    `clasi/sprints/done/` for completed sprints.

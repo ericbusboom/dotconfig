@@ -1,1 +1,1 @@
-/Volumes/Proj/proj/code-projects/dotconfig/.agents/skills/gh-import/SKILL.md
+/Users/eric/proj/code-projects/dotconfig/.agents/skills/gh-import/SKILL.md

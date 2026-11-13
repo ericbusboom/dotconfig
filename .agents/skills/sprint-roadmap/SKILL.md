@@ -15,9 +15,7 @@ them into sprints.
 
 ## Inputs
 
-- `overview.md` in the project's configured design directory
-  (`paths.design` in `.clasi/config.yaml`, default `docs/design/`) —
-  must exist
+- `.clasi/design/overview.md` (must exist)
 - Current architecture (if available)
 - Issue files in `clasi/issues/`
 
